@@ -186,37 +186,87 @@ function mismoLote(x,lote){
          String(x.detalle || '').includes(lote);
 }
 
-function showDep(dep,d){
-  let ok = Number(d.volumen || 0) > 0 ? 'ok' : 'warn';
-  let lote = d.lote || '';
+function perteneceLote(x,lote){
+  if(!lote) return false;
+  return String(x.lote || '') === lote ||
+         String(x.lote_resultante || '') === lote ||
+         String(x.lote_origen || '') === lote ||
+         String(x.detalle || '').includes(lote);
+}
 
+function eventosNodo(dep,lote){
   let entradas = MOVIMIENTOS.filter(x =>
-    x.destino === dep && mismoLote(x,lote)
+    x.destino === dep && perteneceLote(x,lote)
   );
 
   let salidas = MOVIMIENTOS.filter(x =>
-    x.origen === dep && mismoLote(x,lote)
-  );
-
-  let mermas = MOVIMIENTOS.filter(x =>
-    x.dep === dep &&
-    mismoLote(x,lote) &&
-    String(x.detalle || '').toUpperCase().includes('MERMA')
+    x.origen === dep && perteneceLote(x,lote)
   );
 
   let adis = ADICIONES.filter(x =>
-    x.dep === dep && mismoLote(x,lote)
+    x.dep === dep && perteneceLote(x,lote)
   );
 
   let anas = ANALITICAS.filter(x =>
-    x.dep === dep && mismoLote(x,lote)
+    x.dep === dep && perteneceLote(x,lote)
   );
 
-  let padres = entradas
-    .map(x => x.origen)
-    .filter(x => x && x !== dep);
+  return {entradas:entradas,salidas:salidas,adis:adis,anas:anas};
+}
 
-  padres = [...new Set(padres)];
+function lotePadreDesdeMovimiento(x,loteActual){
+  if(x.lote_origen) return x.lote_origen;
+  if(x.lote && x.lote !== loteActual) return x.lote;
+  return loteActual;
+}
+
+function construirArbol(dep,lote,nivel,visitados){
+  let clave = dep + '|' + lote;
+
+  if(visitados[clave]){
+    return '<div class="item mov">↳ '+esc(dep)+' / '+esc(lote)+' ya visitado</div>';
+  }
+
+  visitados[clave] = true;
+
+  let ev = eventosNodo(dep,lote);
+
+  let html = '<details class="box" open>' +
+    '<summary>'+('&nbsp;&nbsp;'.repeat(nivel))+'DEPÓSITO '+esc(dep)+' | Lote '+esc(lote || '-')+'</summary>';
+
+  html += bloque('Entradas', pintarLista(ev.entradas,'mov'));
+  html += bloque('Salidas', pintarLista(ev.salidas,'mov'));
+  html += bloque('Adiciones', pintarLista(ev.adis,'adi'));
+  html += bloque('Analíticas', pintarLista(ev.anas,'ana'));
+
+  let padres = ev.entradas
+    .filter(x => x.origen && x.origen !== dep)
+    .map(x => ({
+      dep:x.origen,
+      lote:lotePadreDesdeMovimiento(x,lote)
+    }));
+
+  let unicos = {};
+  padres.forEach(p => unicos[p.dep + '|' + p.lote] = p);
+
+  let listaPadres = Object.values(unicos);
+
+  if(listaPadres.length > 0){
+    html += '<details class="box" open><summary>Padres anteriores</summary>';
+    listaPadres.forEach(p => {
+      html += construirArbol(p.dep,p.lote,nivel+1,visitados);
+    });
+    html += '</details>';
+  }
+
+  html += '</details>';
+
+  return html;
+}
+
+function showDep(dep,d){
+  let ok = Number(d.volumen || 0) > 0 ? 'ok' : 'warn';
+  let lote = d.lote || '';
 
   let html = '<div class="title">'+esc(dep)+'</div>';
 
@@ -229,20 +279,10 @@ function showDep(dep,d){
     '<b>Lote actual:</b> '+esc(lote || '-')+
     '</div>';
 
-  html += bloque('Padres / depósitos de origen', padres.length
-    ? padres.map(p => '<div class="item mov"><b>PADRE:</b> '+esc(p)+'</div>').join('')
-    : '<div class="vacio">Sin padres directos para este lote</div>'
-  );
-
-  html += bloque('Entradas al depósito de este lote', pintarLista(entradas,'mov'));
-  html += bloque('Salidas del depósito de este lote', pintarLista(salidas,'mov'));
-  html += bloque('Mermas de este lote', pintarLista(mermas,'mov'));
-  html += bloque('Adiciones de este lote', pintarLista(adis,'adi'));
-  html += bloque('Analíticas de este lote', pintarLista(anas,'ana'));
+  html += construirArbol(dep,lote,0,{});
 
   document.getElementById('info').innerHTML = html;
 }
-
 fetch('datos.json?nocache=' + Date.now())
 .then(function(r){
   return r.text();
