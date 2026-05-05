@@ -183,10 +183,20 @@ function render(){
 function showDep(dep,d){
   let ok = Number(d.volumen || 0) > 0 ? 'ok' : 'warn';
 
-  let movs = filtrar(MOVIMIENTOS,dep,d.lote);
-  let adis = filtrar(ADICIONES,dep,d.lote);
-  let anas = filtrar(ANALITICAS,dep,d.lote);
-  let todos = movs.concat(adis).concat(anas);
+  let entradas = MOVIMIENTOS.filter(x => x.destino === dep);
+  let salidas = MOVIMIENTOS.filter(x => x.origen === dep);
+  let mermas = MOVIMIENTOS.filter(x =>
+    x.dep === dep && String(x.detalle || '').toUpperCase().includes('MERMA')
+  );
+
+  let adis = ADICIONES.filter(x => x.dep === dep);
+  let anas = ANALITICAS.filter(x => x.dep === dep);
+
+  let padres = entradas
+    .map(x => x.origen)
+    .filter(x => x && x !== dep);
+
+  padres = [...new Set(padres)];
 
   let html = '<div class="title">'+esc(dep)+'</div>';
 
@@ -199,10 +209,16 @@ function showDep(dep,d){
     '<b>Lote actual:</b> '+esc(d.lote || '-')+
     '</div>';
 
-  html += bloque('Árbol de trazabilidad',pintarLista(todos,'mov'));
-  html += bloque('Analíticas',pintarLista(anas,'ana'));
-  html += bloque('Adiciones',pintarLista(adis,'adi'));
-  html += bloque('Movimientos / trasiegos',pintarLista(movs,'mov'));
+  html += bloque('Padres / depósitos de origen', padres.length
+    ? padres.map(p => '<div class="item mov"><b>PADRE:</b> '+esc(p)+'</div>').join('')
+    : '<div class="vacio">Sin padres directos</div>'
+  );
+
+  html += bloque('Entradas al depósito', pintarLista(entradas,'mov'));
+  html += bloque('Salidas del depósito', pintarLista(salidas,'mov'));
+  html += bloque('Mermas del depósito', pintarLista(mermas,'mov'));
+  html += bloque('Adiciones del depósito', pintarLista(adis,'adi'));
+  html += bloque('Analíticas del depósito', pintarLista(anas,'ana'));
 
   document.getElementById('info').innerHTML = html;
 }
