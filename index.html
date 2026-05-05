@@ -100,8 +100,7 @@ function filtrar(lista,dep,lote){
   return lista.filter(function(x){
     return x.dep === dep ||
            x.origen === dep ||
-           x.destino === dep ||
-           (lote && String(x.detalle || '').includes(lote));
+           x.destino === dep;
   });
 }
 
