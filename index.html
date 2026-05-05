@@ -231,7 +231,7 @@ function construirArbol(dep,lote,nivel,visitados){
 
   let ev = eventosNodo(dep,lote);
 
-  let html = '<details class="box" open>' +
+  let html = '<details class="box">' +
     '<summary>'+('&nbsp;&nbsp;'.repeat(nivel))+'DEPÓSITO '+esc(dep)+' | Lote '+esc(lote || '-')+'</summary>';
 
   html += bloque('Entradas', pintarLista(ev.entradas,'mov'));
@@ -252,7 +252,7 @@ function construirArbol(dep,lote,nivel,visitados){
   let listaPadres = Object.values(unicos);
 
   if(listaPadres.length > 0){
-    html += '<details class="box" open><summary>Padres anteriores</summary>';
+   html += '<details class="box"><summary>Padres anteriores</summary>';
     listaPadres.forEach(p => {
       html += construirArbol(p.dep,p.lote,nivel+1,visitados);
     });
