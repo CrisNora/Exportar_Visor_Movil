@@ -5,44 +5,99 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Visor móvil bodega</title>
 <style>
-body{font-family:Arial;margin:0;background:#f2f2f2;color:#111}
+body{font-family:Arial,sans-serif;margin:0;background:#f2f2f2;color:#111}
 header{background:#202020;color:white;padding:12px}
-h1{font-size:18px;margin:0}
-.wrap{padding:10px}
-.dep{background:white;border:1px solid #999;border-radius:10px;margin:8px;padding:12px;font-weight:bold}
-.error{background:#ffe0e0;border:1px solid red;padding:12px;border-radius:10px}
+h1{font-size:18px;margin:0}.sub{font-size:12px;margin-top:4px}
+.tabs{display:flex;gap:6px;overflow:auto;padding:8px;background:#ddd}
+.tabs button{border:1px solid #999;background:white;border-radius:8px;padding:8px 12px;font-weight:bold}
+.tabs button.active{background:#202020;color:white}
+.wrap{padding:8px}.map{position:relative;background:#eee;border:1px solid #aaa;border-radius:10px;overflow:auto;height:58vh}
+.canvas{position:relative;width:1700px;height:760px}
+.dep{position:absolute;border:1.5px solid #333;border-radius:10px;text-align:center;font-weight:bold;font-size:11px;overflow:hidden;box-shadow:0 1px 3px #888;display:flex;align-items:center;justify-content:center;padding-left:18px;cursor:pointer}
+.bar{position:absolute;left:4px;top:5px;width:11px;bottom:5px;background:white;border:1px solid #555}
+.fill{position:absolute;left:1px;right:1px;bottom:1px}
+.panel{background:white;margin-top:10px;border-radius:10px;padding:12px;border:1px solid #ccc}
+.title{font-weight:bold;font-size:20px;margin-bottom:8px}
+.ok{color:#0b6b0b}.warn{color:#9b0000}
+.ficha{line-height:1.45;font-size:15px}
+.box{border:1px solid #ddd;border-radius:8px;margin-top:8px;background:#f7f7f7}
+.box summary{font-size:15px;font-weight:bold;padding:10px;background:#e9e9e9;border-radius:8px;cursor:pointer}
+.item{background:white;border-left:5px solid #bbb;margin:8px;padding:8px;border-radius:6px;font-size:14px;line-height:1.35}
+.mov{border-left-color:#2d7dd2}.adi{border-left-color:#8a2be2}.ana{border-left-color:#008060}
+.grupo{margin:8px 0;border:1px solid #ccc;border-radius:8px;background:#fff}
+.grupo summary{background:#f0f0f0}
+.vacio{padding:10px;color:#777}
 </style>
 </head>
 <body>
-
-<header>
-<h1>Visor móvil bodega</h1>
-</header>
-
-<div class="wrap" id="app">Cargando datos...</div>
+<header><h1>Visor móvil bodega</h1><div class="sub">Consulta generada desde Excel</div></header>
+<div class="tabs" id="tabs"></div>
+<div class="wrap"><div class="map"><div class="canvas" id="canvas"></div></div><div class="panel" id="info">Cargando datos...</div></div>
 
 <script>
-async function iniciar(){
-    const app=document.getElementById("app");
-    try{
-        const r=await fetch("datos.json?nocache="+Date.now());
-        const data=await r.json();
+let DEPOSITOS={},MAPAS=[],MOVIMIENTOS=[],ADICIONES=[],ANALITICAS=[],mapaActual=0;
 
-        if(!data.deps || data.deps.length===0){
-            app.innerHTML="<div class='error'>datos.json no tiene depósitos</div>";
-            return;
-        }
+function fmt(n){return Math.round(Number(n||0)).toLocaleString('es-ES')}
+function colorDep(d){if(!d||Number(d.volumen||0)<=0)return '#f5f5f5';if(d.color==='TINTO')return '#dc0000';if(d.color==='BLANCO')return '#ffe650';if(d.color==='ROSADO')return '#f4aac8';return '#aaa'}
+function textColor(d){return d&&d.color==='TINTO'&&Number(d.volumen||0)>0?'white':'black'}
+function esc(x){return String(x||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+function normDep(x){let m=String(x||'').toUpperCase().match(/([AFMITEB])[-_ ]*0*([0-9]{1,2})/);return m?m[1]+String(Number(m[2])):''}
+function detalleBonito(t){return esc(t).replace(/\s*\|\s*/g,'<br>').replace(/=/g,': ')}
+function bloque(titulo,contenido){return '<details class="box"><summary>'+titulo+'</summary>'+contenido+'</details>'}
+function pintarLista(lista,clase){if(!lista||lista.length===0)return '<div class="vacio">Sin datos</div>';return lista.map(x=>'<div class="item '+clase+'">'+(x.fecha?'<b>'+esc(x.fecha)+'</b><br>':'')+detalleBonito(x.detalle||'')+'</div>').join('')}
+function filtrar(lista,dep,lote){return lista.filter(x=>x.dep===dep||x.origen===dep||x.destino===dep||(lote&&String(x.detalle||'').includes(lote)))}
 
-        app.innerHTML=data.deps.map(d=>
-            "<div class='dep'>"+d.dep+"<br>Volumen: "+d.vol+" L</div>"
-        ).join("");
-
-    }catch(e){
-        app.innerHTML="<div class='error'>No se pudo cargar datos.json<br>"+e+"</div>";
-    }
+function renderTabs(){
+ let t=document.getElementById('tabs');t.innerHTML='';
+ MAPAS.forEach((m,i)=>{let b=document.createElement('button');b.textContent=m.nombre;b.className=i===mapaActual?'active':'';b.onclick=()=>{mapaActual=i;render()};t.appendChild(b)})
 }
-iniciar();
-</script>
 
+function render(){
+ renderTabs();
+ let c=document.getElementById('canvas');c.innerHTML='';
+ if(!MAPAS.length){document.getElementById('info').innerHTML='No hay mapas cargados.';return}
+ let maxX=1200,maxY=600;
+ MAPAS[mapaActual].deps.forEach(p=>{
+  maxX=Math.max(maxX,p.x+p.w+80);maxY=Math.max(maxY,p.y+p.h+80);
+  let d=DEPOSITOS[p.dep]||{dep:p.dep,volumen:0,capacidad:0,tipo:'',estado:'',lote:'',fecha:'',color:'VACIO'};
+  let e=document.createElement('div');e.className='dep';
+  e.style.left=p.x+'px';e.style.top=p.y+'px';e.style.width=p.w+'px';e.style.height=p.h+'px';
+  e.style.background=colorDep(d);e.style.color=textColor(d);
+  let ratio=d.capacidad>0?Math.max(0,Math.min(1,d.volumen/d.capacidad)):0;
+  e.innerHTML='<div class="bar"><div class="fill" style="height:'+(ratio*100)+'%;background:'+colorDep(d)+'"></div></div><div>'+p.label+'<br>'+fmt(d.volumen)+' / '+fmt(d.capacidad)+' L<br>'+(Number(d.volumen||0)>0?(d.tipo||'SIN CLASIFICAR'):'VACIO')+(d.estado?'<br>'+d.estado:'')+'</div>';
+  e.onclick=()=>showDep(p.dep,d);
+  c.appendChild(e);
+ });
+ c.style.width=maxX+'px';c.style.height=maxY+'px';
+}
+
+function showDep(dep,d){
+ let ok=Number(d.volumen||0)>0?'ok':'warn';
+ let movs=filtrar(MOVIMIENTOS,dep,d.lote);
+ let adis=filtrar(ADICIONES,dep,d.lote);
+ let anas=filtrar(ANALITICAS,dep,d.lote);
+ let todos=movs.concat(adis).concat(anas);
+ let html='<div class="title">'+esc(dep)+'</div>';
+ html+='<div class="ficha"><b>Fecha:</b> '+esc(d.fecha||'-')+'<br><b>Volumen:</b> <span class="'+ok+'">'+fmt(d.volumen)+' L</span><br><b>Capacidad:</b> '+fmt(d.capacidad)+' L<br><b>Tipo:</b> '+esc(d.tipo||'-')+'<br><b>Estado:</b> '+esc(d.estado||'-')+'<br><b>Lote actual:</b> '+esc(d.lote||'-')+'</div>';
+ html+=bloque('Árbol de trazabilidad',pintarLista(todos,'mov'));
+ html+=bloque('Analíticas',pintarLista(anas,'ana'));
+ html+=bloque('Adiciones',pintarLista(adis,'adi'));
+ html+=bloque('Movimientos / trasiegos',pintarLista(movs,'mov'));
+ document.getElementById('info').innerHTML=html;
+}
+
+fetch('datos.json?nocache='+Date.now())
+.then(r=>r.json())
+.then(data=>{
+ DEPOSITOS=data.depositos||{};
+ MAPAS=data.mapas||[];
+ MOVIMIENTOS=data.movimientos||[];
+ ADICIONES=data.adiciones||[];
+ ANALITICAS=data.analiticas||[];
+ render();
+ document.getElementById('info').innerHTML='Pulsa un depósito.';
+})
+.catch(e=>{document.getElementById('info').innerHTML='Error cargando datos.json: '+e});
+</script>
 </body>
-</html>﻿
+</html>
