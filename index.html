@@ -180,17 +180,37 @@ function render(){
   c.style.height = maxY + 'px';
 }
 
+function mismoLote(x,lote){
+  if(!lote) return false;
+  return String(x.lote || '') === lote ||
+         String(x.detalle || '').includes(lote);
+}
+
 function showDep(dep,d){
   let ok = Number(d.volumen || 0) > 0 ? 'ok' : 'warn';
+  let lote = d.lote || '';
 
-  let entradas = MOVIMIENTOS.filter(x => x.destino === dep);
-  let salidas = MOVIMIENTOS.filter(x => x.origen === dep);
-  let mermas = MOVIMIENTOS.filter(x =>
-    x.dep === dep && String(x.detalle || '').toUpperCase().includes('MERMA')
+  let entradas = MOVIMIENTOS.filter(x =>
+    x.destino === dep && mismoLote(x,lote)
   );
 
-  let adis = ADICIONES.filter(x => x.dep === dep);
-  let anas = ANALITICAS.filter(x => x.dep === dep);
+  let salidas = MOVIMIENTOS.filter(x =>
+    x.origen === dep && mismoLote(x,lote)
+  );
+
+  let mermas = MOVIMIENTOS.filter(x =>
+    x.dep === dep &&
+    mismoLote(x,lote) &&
+    String(x.detalle || '').toUpperCase().includes('MERMA')
+  );
+
+  let adis = ADICIONES.filter(x =>
+    x.dep === dep && mismoLote(x,lote)
+  );
+
+  let anas = ANALITICAS.filter(x =>
+    x.dep === dep && mismoLote(x,lote)
+  );
 
   let padres = entradas
     .map(x => x.origen)
@@ -206,19 +226,19 @@ function showDep(dep,d){
     '<b>Capacidad:</b> '+fmt(d.capacidad)+' L<br>' +
     '<b>Tipo:</b> '+esc(d.tipo || '-')+'<br>' +
     '<b>Estado:</b> '+esc(d.estado || '-')+'<br>' +
-    '<b>Lote actual:</b> '+esc(d.lote || '-')+
+    '<b>Lote actual:</b> '+esc(lote || '-')+
     '</div>';
 
   html += bloque('Padres / depósitos de origen', padres.length
     ? padres.map(p => '<div class="item mov"><b>PADRE:</b> '+esc(p)+'</div>').join('')
-    : '<div class="vacio">Sin padres directos</div>'
+    : '<div class="vacio">Sin padres directos para este lote</div>'
   );
 
-  html += bloque('Entradas al depósito', pintarLista(entradas,'mov'));
-  html += bloque('Salidas del depósito', pintarLista(salidas,'mov'));
-  html += bloque('Mermas del depósito', pintarLista(mermas,'mov'));
-  html += bloque('Adiciones del depósito', pintarLista(adis,'adi'));
-  html += bloque('Analíticas del depósito', pintarLista(anas,'ana'));
+  html += bloque('Entradas al depósito de este lote', pintarLista(entradas,'mov'));
+  html += bloque('Salidas del depósito de este lote', pintarLista(salidas,'mov'));
+  html += bloque('Mermas de este lote', pintarLista(mermas,'mov'));
+  html += bloque('Adiciones de este lote', pintarLista(adis,'adi'));
+  html += bloque('Analíticas de este lote', pintarLista(anas,'ana'));
 
   document.getElementById('info').innerHTML = html;
 }
