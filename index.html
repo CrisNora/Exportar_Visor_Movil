@@ -270,18 +270,29 @@ function claveAnalitica(x){
 }
 
 function ultimaAnaliticaDeDeposito(dep,lote){
-  let lista = ANALITICAS.filter(function(a){
-    return a.dep === dep && perteneceLote(a,lote);
+  let depBuscado = String(dep || '').trim();
+
+  if(!depBuscado) return null;
+
+  let listaMismoLote = ANALITICAS.filter(function(a){
+    return String(a.dep || '').trim() === depBuscado && perteneceLote(a,lote);
   });
 
-  return ordenarFechaDesc(lista)[0] || null;
+  let encontrada = ordenarFechaDesc(listaMismoLote)[0] || null;
+
+  if(encontrada){
+    return encontrada;
+  }
+
+  let listaSoloDeposito = ANALITICAS.filter(function(a){
+    return String(a.dep || '').trim() === depBuscado;
+  });
+
+  return ordenarFechaDesc(listaSoloDeposito)[0] || null;
 }
 
 function analiticasConDepositoAnterior(dep,lote,ev){
   let anas = (ev.anas || []).slice();
-
-  if(!lote) return anas;
-
   let yaIncluidas = {};
 
   anas.forEach(function(a){
@@ -289,12 +300,19 @@ function analiticasConDepositoAnterior(dep,lote,ev){
   });
 
   (ev.entradas || []).forEach(function(m){
-    if(!m.origen || m.origen === dep) return;
+    let origen = String(m.origen || '').trim();
+
+    if(!origen) return;
+    if(origen === String(dep || '').trim()) return;
 
     if(esMezcla(m)) return;
 
     let loteAnterior = lotePadreDesdeMovimiento(m,lote);
-    let anaAnterior = ultimaAnaliticaDeDeposito(m.origen,loteAnterior);
+
+    let anaAnterior =
+      ultimaAnaliticaDeDeposito(origen,loteAnterior) ||
+      ultimaAnaliticaDeDeposito(origen,lote) ||
+      ultimaAnaliticaDeDeposito(origen,'');
 
     if(!anaAnterior) return;
 
@@ -311,9 +329,11 @@ function analiticasConDepositoAnterior(dep,lote,ev){
     }
 
     copia.detalle =
-      'Analitica del deposito anterior=' + m.origen +
+      'ANALÍTICA HEREDADA DEL DEPÓSITO ANTERIOR: ' + origen +
       ' | ' +
       (anaAnterior.detalle || '');
+
+    copia.es_heredada = true;
 
     yaIncluidas[claveOriginal] = true;
     anas.push(copia);
@@ -321,7 +341,6 @@ function analiticasConDepositoAnterior(dep,lote,ev){
 
   return anas;
 }
-
 function construirArbol(dep,lote,nivel,visitados){
   let clave = dep + '|' + lote;
 
