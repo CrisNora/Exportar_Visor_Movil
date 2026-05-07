@@ -158,23 +158,132 @@ function bloque(titulo,contenido){
   return '<details class="box"><summary>'+titulo+'</summary>'+contenido+'</details>';
 }
 
+function valorFecha(f){
+  let s = String(f || '').trim();
+
+  if(!s) return 0;
+
+  let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if(m){
+    return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1])).getTime();
+  }
+
+  m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if(m){
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
+  }
+
+  let t = Date.parse(s);
+  return isNaN(t) ? 0 : t;
+}
+
+function ordenarFechaDesc(lista){
+  return (lista || []).slice().sort(function(a,b){
+    return valorFecha(b.fecha) - valorFecha(a.fecha);
+  });
+}
+
 function pintarLista(lista,clase){
-  if(!lista || lista.length === 0){
+  let salida = ordenarFechaDesc(lista);
+
+  if(!salida || salida.length === 0){
     return '<div class="vacio">Sin datos</div>';
   }
 
-  return lista.map(function(x){
+  return salida.map(function(x){
     let f = x.fecha ? '<b>'+esc(x.fecha)+'</b><br>' : '';
     return '<div class="item '+clase+'">'+f+detalleBonito(x.detalle || '')+'</div>';
   }).join('');
 }
 
-function filtrar(lista,dep,lote){
-  return lista.filter(function(x){
-    return x.dep === dep ||
-           x.origen === dep ||
-           x.destino === dep;
+function campo(x,nombres){
+  if(!x) return '';
+
+  for(let i=0;i<nombres.length;i++){
+    let n = nombres[i];
+
+    if(x[n] !== undefined && x[n] !== null && String(x[n]).trim() !== ''){
+      return String(x[n]).trim();
+    }
+  }
+
+  let buscados = nombres.map(function(n){
+    return normalizarTexto(n).replace(/_/g,'');
   });
+
+  for(let k in x){
+    if(Object.prototype.hasOwnProperty.call(x,k)){
+      let nk = normalizarTexto(k).replace(/_/g,'');
+
+      if(buscados.includes(nk)){
+        if(x[k] !== undefined && x[k] !== null && String(x[k]).trim() !== ''){
+          return String(x[k]).trim();
+        }
+      }
+    }
+  }
+
+  return '';
+}
+
+function campoDetalle(x,nombres){
+  let detalle = String((x && x.detalle) || '');
+
+  if(!detalle) return '';
+
+  for(let i=0;i<nombres.length;i++){
+    let n = nombres[i];
+
+    let patrones = [
+      n,
+      n.replace(/_/g,' '),
+      n.replace(/ /g,'_')
+    ];
+
+    for(let j=0;j<patrones.length;j++){
+      let p = patrones[j].replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+      let re = new RegExp(p + '\\s*[:=]\\s*([^|\\n\\r]+)', 'i');
+      let m = detalle.match(re);
+
+      if(m && m[1]){
+        return String(m[1]).trim();
+      }
+    }
+  }
+
+  return '';
+}
+
+function loteOrigenMovimiento(x,loteActual){
+  let directo = campo(x,[
+    'lote_origen_momento',
+    'Lote_Origen_Momento',
+    'lote_origen',
+    'Lote_Origen',
+    'lote_anterior',
+    'Lote_Anterior'
+  ]);
+
+  if(directo) return directo;
+
+  let desdeDetalle = campoDetalle(x,[
+    'Lote_Origen_Momento',
+    'Lote Origen Momento',
+    'Lote_Origen',
+    'Lote Origen',
+    'Lote_Anterior',
+    'Lote Anterior'
+  ]);
+
+  if(desdeDetalle) return desdeDetalle;
+
+  let lote = campo(x,['lote','Lote']);
+
+  if(lote && lote !== loteActual){
+    return lote;
+  }
+
+  return loteActual;
 }
 
 function renderTabs(){
@@ -269,18 +378,22 @@ function render(){
   c.style.height = maxY + 'px';
 }
 
-function mismoLote(x,lote){
-  if(!lote) return false;
-  return String(x.lote || '') === lote ||
-         String(x.detalle || '').includes(lote);
-}
-
 function perteneceLote(x,lote){
   if(!lote) return false;
-  return String(x.lote || '') === lote ||
-         String(x.lote_resultante || '') === lote ||
-         String(x.lote_origen || '') === lote ||
-         String(x.detalle || '').includes(lote);
+
+  let valores = [
+    campo(x,['lote','Lote']),
+    campo(x,['lote_resultante','Lote_Resultante']),
+    campo(x,['lote_origen','Lote_Origen']),
+    campo(x,['lote_origen_momento','Lote_Origen_Momento']),
+    campoDetalle(x,['Lote_Resultante','Lote_Origen','Lote_Origen_Momento'])
+  ];
+
+  if(valores.some(function(v){ return String(v || '') === String(lote || ''); })){
+    return true;
+  }
+
+  return String(x.detalle || '').includes(lote);
 }
 
 function eventosNodo(dep,lote){
@@ -303,10 +416,98 @@ function eventosNodo(dep,lote){
   return {entradas:entradas,salidas:salidas,adis:adis,anas:anas};
 }
 
-function lotePadreDesdeMovimiento(x,loteActual){
-  if(x.lote_origen) return x.lote_origen;
-  if(x.lote && x.lote !== loteActual) return x.lote;
-  return loteActual;
+function textoMovimiento(x){
+  let partes = [];
+
+  ['tipo','tipo_movimiento','movimiento','operacion','accion','detalle'].forEach(function(k){
+    if(x && x[k]) partes.push(String(x[k]));
+  });
+
+  return partes.join(' ').toLowerCase();
+}
+
+function esMezcla(x){
+  let t = textoMovimiento(x);
+  return t.includes('mezcla') || t.includes('mix');
+}
+
+function claveAnalitica(x){
+  return String(x.dep || '') + '|' +
+         String(x.fecha || '') + '|' +
+         String(x.lote || '') + '|' +
+         String(x.detalle || '');
+}
+
+function ultimaAnaliticaDeDeposito(dep,lote){
+  let depBuscado = String(dep || '').trim();
+
+  if(!depBuscado) return null;
+
+  let listaMismoLote = ANALITICAS.filter(function(a){
+    return String(a.dep || '').trim() === depBuscado && perteneceLote(a,lote);
+  });
+
+  let encontrada = ordenarFechaDesc(listaMismoLote)[0] || null;
+
+  if(encontrada){
+    return encontrada;
+  }
+
+  let listaSoloDeposito = ANALITICAS.filter(function(a){
+    return String(a.dep || '').trim() === depBuscado;
+  });
+
+  return ordenarFechaDesc(listaSoloDeposito)[0] || null;
+}
+
+function analiticasConDepositoAnterior(dep,lote,ev){
+  let anas = (ev.anas || []).slice();
+  let yaIncluidas = {};
+
+  anas.forEach(function(a){
+    yaIncluidas[claveAnalitica(a)] = true;
+  });
+
+  (ev.entradas || []).forEach(function(m){
+    let origen = String(m.origen || '').trim();
+
+    if(!origen) return;
+    if(origen === String(dep || '').trim()) return;
+
+    let loteAnterior = loteOrigenMovimiento(m,lote);
+
+    let anaAnterior =
+      ultimaAnaliticaDeDeposito(origen,loteAnterior) ||
+      ultimaAnaliticaDeDeposito(origen,lote) ||
+      ultimaAnaliticaDeDeposito(origen,'');
+
+    if(!anaAnterior) return;
+
+    let claveOriginal = claveAnalitica(anaAnterior);
+
+    if(yaIncluidas[claveOriginal]) return;
+
+    let copia = {};
+
+    for(let k in anaAnterior){
+      if(Object.prototype.hasOwnProperty.call(anaAnterior,k)){
+        copia[k] = anaAnterior[k];
+      }
+    }
+
+    copia.detalle =
+      'ANALÍTICA HEREDADA DEL DEPÓSITO ANTERIOR: ' + origen +
+      ' | Lote origen: ' + loteAnterior +
+      ' | ' +
+      (anaAnterior.detalle || '');
+
+    copia.es_heredada = true;
+
+    yaIncluidas[claveOriginal] = true;
+    anas.push(copia);
+  });
+
+  return anas;
 }
 
 function construirArbol(dep,lote,nivel,visitados){
@@ -319,6 +520,7 @@ function construirArbol(dep,lote,nivel,visitados){
   visitados[clave] = true;
 
   let ev = eventosNodo(dep,lote);
+  let anasVisor = analiticasConDepositoAnterior(dep,lote,ev);
 
   let abierto = nivel === 0 ? ' open' : '';
 
@@ -328,13 +530,13 @@ function construirArbol(dep,lote,nivel,visitados){
   html += bloque('Entradas', pintarLista(ev.entradas,'mov'));
   html += bloque('Salidas', pintarLista(ev.salidas,'mov'));
   html += bloque('Adiciones', pintarLista(ev.adis,'adi'));
-  html += bloque('Analíticas', pintarLista(ev.anas,'ana'));
+  html += bloque('Analíticas', pintarLista(anasVisor,'ana'));
 
   let padres = ev.entradas
     .filter(x => x.origen && x.origen !== dep)
     .map(x => ({
       dep:x.origen,
-      lote:lotePadreDesdeMovimiento(x,lote)
+      lote:loteOrigenMovimiento(x,lote)
     }));
 
   let unicos = {};
