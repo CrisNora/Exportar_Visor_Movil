@@ -351,60 +351,7 @@ function construirArbol(dep,lote,nivel,visitados){
   visitados[clave] = true;
 
   let ev = eventosNodo(dep,lote);
-
-  let padres = ev.entradas
-    .filter(function(x){
-      if(!x.origen || x.origen === dep) return false;
-      if(esMezcla(x)) return false;
-      return true;
-    })
-    .map(function(x){
-      return {
-        dep:x.origen,
-        lote:lotePadreDesdeMovimiento(x,lote)
-      };
-    });
-
-  let unicos = {};
-  padres.forEach(function(p){
-    unicos[p.dep + '|' + p.lote] = p;
-  });
-
-  let listaPadres = Object.values(unicos);
-
-  let anasActuales = (ev.anas || []).slice();
-
-  listaPadres.forEach(function(p){
-    let evPadre = eventosNodo(p.dep,p.lote);
-    let anasPadre = ordenarFechaDesc(evPadre.anas || []);
-
-    if(anasPadre.length === 0){
-      anasPadre = ordenarFechaDesc(
-        ANALITICAS.filter(function(a){
-          return String(a.dep || '').trim() === String(p.dep || '').trim();
-        })
-      );
-    }
-
-    if(anasPadre.length > 0){
-      let ana = anasPadre[0];
-
-      let copia = {};
-
-      for(let k in ana){
-        if(Object.prototype.hasOwnProperty.call(ana,k)){
-          copia[k] = ana[k];
-        }
-      }
-
-      copia.detalle =
-        'ANALÍTICA HEREDADA DEL DEPÓSITO ANTERIOR: ' + p.dep +
-        ' | ' +
-        (ana.detalle || '');
-
-      anasActuales.push(copia);
-    }
-  });
+  let anasVisor = analiticasConDepositoAnterior(dep,lote,ev);
 
   let abierto = nivel === 0 ? ' open' : '';
 
@@ -414,12 +361,24 @@ function construirArbol(dep,lote,nivel,visitados){
   html += bloque('Entradas', pintarLista(ev.entradas,'mov',true));
   html += bloque('Salidas', pintarLista(ev.salidas,'mov',true));
   html += bloque('Adiciones', pintarLista(ev.adis,'adi',true));
-  html += bloque('Analíticas', pintarLista(anasActuales,'ana',true));
+  html += bloque('Analíticas', pintarLista(anasVisor,'ana',true));
+
+  let padres = ev.entradas
+    .filter(x => x.origen && x.origen !== dep)
+    .map(x => ({
+      dep:x.origen,
+      lote:lotePadreDesdeMovimiento(x,lote)
+    }));
+
+  let unicos = {};
+  padres.forEach(p => unicos[p.dep + '|' + p.lote] = p);
+
+  let listaPadres = Object.values(unicos);
 
   if(listaPadres.length > 0){
     html += '<details class="box"><summary>Padres anteriores</summary>';
 
-    listaPadres.forEach(function(p){
+    listaPadres.forEach(p => {
       html += construirArbol(p.dep,p.lote,nivel+1,visitados);
     });
 
