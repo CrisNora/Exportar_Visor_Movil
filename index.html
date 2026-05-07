@@ -77,31 +77,6 @@ function esc(x){
   });
 }
 
-function valorFecha(f){
-  let s = String(f || '').trim();
-
-  if(!s) return 0;
-
-  let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if(m){
-    return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1])).getTime();
-  }
-
-  m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-  if(m){
-    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
-  }
-
-  let t = Date.parse(s);
-  return isNaN(t) ? 0 : t;
-}
-
-function ordenarFechaDesc(lista){
-  return (lista || []).slice().sort(function(a,b){
-    return valorFecha(b.fecha) - valorFecha(a.fecha);
-  });
-}
-
 function detalleBonito(t){
   return esc(t).replace(/\s*\|\s*/g,'<br>').replace(/=/g,': ');
 }
@@ -110,14 +85,12 @@ function bloque(titulo,contenido){
   return '<details class="box"><summary>'+titulo+'</summary>'+contenido+'</details>';
 }
 
-function pintarLista(lista,clase,ordenarDesc){
-  let salida = ordenarDesc ? ordenarFechaDesc(lista) : (lista || []);
-
-  if(!salida || salida.length === 0){
+function pintarLista(lista,clase){
+  if(!lista || lista.length === 0){
     return '<div class="vacio">Sin datos</div>';
   }
 
-  return salida.map(function(x){
+  return lista.map(function(x){
     let f = x.fecha ? '<b>'+esc(x.fecha)+'</b><br>' : '';
     return '<div class="item '+clase+'">'+f+detalleBonito(x.detalle || '')+'</div>';
   }).join('');
@@ -247,100 +220,6 @@ function lotePadreDesdeMovimiento(x,loteActual){
   return loteActual;
 }
 
-function textoMovimiento(x){
-  let partes = [];
-
-  ['tipo','tipo_movimiento','movimiento','operacion','accion','detalle'].forEach(function(k){
-    if(x && x[k]) partes.push(String(x[k]));
-  });
-
-  return partes.join(' ').toLowerCase();
-}
-
-function esMezcla(x){
-  let t = textoMovimiento(x);
-  return t.includes('mezcla') || t.includes('mix');
-}
-
-function claveAnalitica(x){
-  return String(x.dep || '') + '|' +
-         String(x.fecha || '') + '|' +
-         String(x.lote || '') + '|' +
-         String(x.detalle || '');
-}
-
-function ultimaAnaliticaDeDeposito(dep,lote){
-  let depBuscado = String(dep || '').trim();
-
-  if(!depBuscado) return null;
-
-  let listaMismoLote = ANALITICAS.filter(function(a){
-    return String(a.dep || '').trim() === depBuscado && perteneceLote(a,lote);
-  });
-
-  let encontrada = ordenarFechaDesc(listaMismoLote)[0] || null;
-
-  if(encontrada){
-    return encontrada;
-  }
-
-  let listaSoloDeposito = ANALITICAS.filter(function(a){
-    return String(a.dep || '').trim() === depBuscado;
-  });
-
-  return ordenarFechaDesc(listaSoloDeposito)[0] || null;
-}
-
-function analiticasConDepositoAnterior(dep,lote,ev){
-  let anas = (ev.anas || []).slice();
-  let yaIncluidas = {};
-
-  anas.forEach(function(a){
-    yaIncluidas[claveAnalitica(a)] = true;
-  });
-
-  (ev.entradas || []).forEach(function(m){
-    let origen = String(m.origen || '').trim();
-
-    if(!origen) return;
-    if(origen === String(dep || '').trim()) return;
-
-    if(esMezcla(m)) return;
-
-    let loteAnterior = lotePadreDesdeMovimiento(m,lote);
-
-    let anaAnterior =
-      ultimaAnaliticaDeDeposito(origen,loteAnterior) ||
-      ultimaAnaliticaDeDeposito(origen,lote) ||
-      ultimaAnaliticaDeDeposito(origen,'');
-
-    if(!anaAnterior) return;
-
-    let claveOriginal = claveAnalitica(anaAnterior);
-
-    if(yaIncluidas[claveOriginal]) return;
-
-    let copia = {};
-
-    for(let k in anaAnterior){
-      if(Object.prototype.hasOwnProperty.call(anaAnterior,k)){
-        copia[k] = anaAnterior[k];
-      }
-    }
-
-    copia.detalle =
-      'ANALÍTICA HEREDADA DEL DEPÓSITO ANTERIOR: ' + origen +
-      ' | ' +
-      (anaAnterior.detalle || '');
-
-    copia.es_heredada = true;
-
-    yaIncluidas[claveOriginal] = true;
-    anas.push(copia);
-  });
-
-  return anas;
-}
 function construirArbol(dep,lote,nivel,visitados){
   let clave = dep + '|' + lote;
 
@@ -351,17 +230,16 @@ function construirArbol(dep,lote,nivel,visitados){
   visitados[clave] = true;
 
   let ev = eventosNodo(dep,lote);
-  let anasVisor = analiticasConDepositoAnterior(dep,lote,ev);
 
   let abierto = nivel === 0 ? ' open' : '';
 
   let html = '<details class="box"' + abierto + '>' +
     '<summary>'+('&nbsp;&nbsp;'.repeat(nivel))+'DEPÓSITO '+esc(dep)+' | Lote '+esc(lote || '-')+'</summary>';
 
-  html += bloque('Entradas', pintarLista(ev.entradas,'mov',true));
-  html += bloque('Salidas', pintarLista(ev.salidas,'mov',true));
-  html += bloque('Adiciones', pintarLista(ev.adis,'adi',true));
-  html += bloque('Analíticas', pintarLista(anasVisor,'ana',true));
+  html += bloque('Entradas', pintarLista(ev.entradas,'mov'));
+  html += bloque('Salidas', pintarLista(ev.salidas,'mov'));
+  html += bloque('Adiciones', pintarLista(ev.adis,'adi'));
+  html += bloque('Analíticas', pintarLista(ev.anas,'ana'));
 
   let padres = ev.entradas
     .filter(x => x.origen && x.origen !== dep)
@@ -408,7 +286,6 @@ function showDep(dep,d){
 
   document.getElementById('info').innerHTML = html;
 }
-
 fetch('datos.json?nocache=' + Date.now())
 .then(function(r){
   return r.text();
