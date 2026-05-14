@@ -177,10 +177,71 @@ function valorFecha(f){
   return isNaN(t) ? 0 : t;
 }
 
+function numeroOrdenRegistro(x, indiceOriginal){
+  if(!x) return indiceOriginal || 0;
+
+  let posibles = [
+    x.orden_sistema,
+    x.Orden_Sistema,
+    x.ORDEN_SISTEMA,
+    x.orden,
+    x.Orden,
+    x.id,
+    x.ID,
+    x.Id
+  ];
+
+  for(let i = 0; i < posibles.length; i++){
+    let v = posibles[i];
+
+    if(v !== undefined && v !== null && String(v).trim() !== ''){
+      let n = Number(String(v).replace(/\./g,'').replace(',','.'));
+      if(!isNaN(n)) return n;
+    }
+  }
+
+  let detalle = String(x.detalle || '');
+
+  let m = detalle.match(/Orden[_\s]*Sistema\s*[:=]\s*([0-9.,]+)/i);
+  if(m && m[1]){
+    let n = Number(String(m[1]).replace(/\./g,'').replace(',','.'));
+    if(!isNaN(n)) return n;
+  }
+
+  return indiceOriginal || 0;
+}
+
 function ordenarFechaDesc(lista){
-  return (lista || []).slice().sort(function(a,b){
-    return valorFecha(b.fecha) - valorFecha(a.fecha);
-  });
+  return (lista || [])
+    .map(function(x,i){
+      return {
+        item: x,
+        indice: i
+      };
+    })
+    .sort(function(a,b){
+      let fa = valorFecha(a.item.fecha);
+      let fb = valorFecha(b.item.fecha);
+
+      // 1) Fecha más reciente primero
+      if(fb !== fa){
+        return fb - fa;
+      }
+
+      let oa = numeroOrdenRegistro(a.item, a.indice);
+      let ob = numeroOrdenRegistro(b.item, b.indice);
+
+      // 2) Si es el mismo día, último registro anotado primero
+      if(ob !== oa){
+        return ob - oa;
+      }
+
+      // 3) Si no hay Orden_Sistema, último elemento del JSON primero
+      return b.indice - a.indice;
+    })
+    .map(function(x){
+      return x.item;
+    });
 }
 
 function pintarLista(lista,clase){
