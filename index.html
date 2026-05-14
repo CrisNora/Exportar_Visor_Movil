@@ -396,24 +396,167 @@ function perteneceLote(x,lote){
   return String(x.detalle || '').includes(lote);
 }
 
+function normalizarDep(x){
+  let t = String(x || '').trim().toUpperCase();
+
+  t = t.replace(/^ACTUAL\s*:\s*/i,'');
+  t = t.replace(/^ORIGEN\s*:\s*/i,'');
+  t = t.replace(/^DESTINO\s*:\s*/i,'');
+  t = t.replace(/^DEP[ÓO]SITO\s*:\s*/i,'');
+  t = t.replace(/^DEPOSITO\s*:\s*/i,'');
+
+  return t.trim();
+}
+
+function depositoMovimiento(x){
+  let valores = [
+    campo(x,['dep','Dep','deposito','Deposito','depósito','Depósito']),
+    campo(x,['origen','Origen']),
+    campo(x,['destino','Destino']),
+    campoDetalle(x,['Depósito','Deposito','Dep','Actual','Origen','Destino'])
+  ];
+
+  for(let i = 0; i < valores.length; i++){
+    if(String(valores[i] || '').trim() !== ''){
+      return normalizarDep(valores[i]);
+    }
+  }
+
+  return '';
+}
+
+function origenMovimiento(x){
+  return normalizarDep(
+    campo(x,['origen','Origen']) ||
+    campoDetalle(x,['Origen'])
+  );
+}
+
+function destinoMovimiento(x){
+  return normalizarDep(
+    campo(x,['destino','Destino']) ||
+    campoDetalle(x,['Destino'])
+  );
+}
+
+function tipoMovimientoVisor(x){
+  let valores = [
+    campo(x,['evento','Evento']),
+    campo(x,['tipo','Tipo']),
+    campo(x,['tipo_movimiento','Tipo_Movimiento']),
+    campo(x,['movimiento','Movimiento']),
+    campo(x,['operacion','Operacion','operación','Operación']),
+    campo(x,['accion','Accion','acción','Acción']),
+    campoDetalle(x,['Evento','Tipo','Tipo_Movimiento','Movimiento','Operacion','Operación','Accion','Acción']),
+    x && x.detalle ? x.detalle : ''
+  ];
+
+  return normalizarTexto(valores.join(' '));
+}
+
+function litrosMovimiento(x){
+  let v =
+    campo(x,['litros','Litros','volumen','Volumen','cantidad','Cantidad']) ||
+    campoDetalle(x,['Litros','Volumen','Cantidad']);
+
+  v = String(v || '0')
+    .replace(/\./g,'')
+    .replace(',','.');
+
+  let n = Number(v);
+
+  return isNaN(n) ? 0 : n;
+}
+
+function esSalidaMovimiento(x){
+  let t = tipoMovimientoVisor(x);
+
+  if(t.includes('SALIDA_CLIENTE')) return true;
+  if(t.includes('SALIDA CLIENTE')) return true;
+  if(t.includes('CLIENTE')) return true;
+  if(t.includes('EMBOTELLADO')) return true;
+  if(t.includes('ENVIO')) return true;
+  if(t.includes('ENVÍO')) return true;
+  if(t.includes('CARGA')) return true;
+  if(t.includes('SALIDA')) return true;
+
+  if(t.includes('MERMA')){
+    return litrosMovimiento(x) < 0;
+  }
+
+  return false;
+}
+
+function esEntradaMovimiento(x){
+  let t = tipoMovimientoVisor(x);
+
+  if(t.includes('ENTRADA')) return true;
+  if(t.includes('RECEPCION')) return true;
+  if(t.includes('RECEPCIÓN')) return true;
+  if(t.includes('RECEPCION_BODEGA')) return true;
+  if(t.includes('RECEPCIÓN_BODEGA')) return true;
+
+  if(t.includes('MERMA')){
+    return litrosMovimiento(x) > 0;
+  }
+
+  return false;
+}
+
+function movimientoPerteneceADeposito(x,dep){
+  let depBuscado = normalizarDep(dep);
+
+  let posibles = [
+    depositoMovimiento(x),
+    origenMovimiento(x),
+    destinoMovimiento(x),
+    normalizarDep(campo(x,['dep','Dep'])),
+    normalizarDep(campo(x,['deposito','Deposito','depósito','Depósito'])),
+    normalizarDep(campoDetalle(x,['Depósito','Deposito','Actual','Origen','Destino']))
+  ];
+
+  return posibles.some(function(v){
+    return v && v === depBuscado;
+  });
+}
+
 function eventosNodo(dep,lote){
-  let entradas = MOVIMIENTOS.filter(x =>
-    x.destino === dep && perteneceLote(x,lote)
-  );
+  let depBuscado = normalizarDep(dep);
 
-  let salidas = MOVIMIENTOS.filter(x =>
-    x.origen === dep && perteneceLote(x,lote)
-  );
+  let entradas = MOVIMIENTOS.filter(function(x){
+    if(!perteneceLote(x,lote)) return false;
 
-  let adis = ADICIONES.filter(x =>
-    x.dep === dep && perteneceLote(x,lote)
-  );
+    let destino = destinoMovimiento(x);
 
-  let anas = ANALITICAS.filter(x =>
-    x.dep === dep && perteneceLote(x,lote)
-  );
+    if(destino && destino === depBuscado) return true;
 
-  return {entradas:entradas,salidas:salidas,adis:adis,anas:anas};
+    return movimientoPerteneceADeposito(x,depBuscado) && esEntradaMovimiento(x);
+  });
+
+  let salidas = MOVIMIENTOS.filter(function(x){
+    if(!perteneceLote(x,lote)) return false;
+
+    let origen = origenMovimiento(x);
+
+    if(origen && origen === depBuscado) return true;
+
+    return movimientoPerteneceADeposito(x,depBuscado) && esSalidaMovimiento(x);
+  });
+
+  let adis = ADICIONES.filter(function(x){
+    return normalizarDep(x.dep) === depBuscado && perteneceLote(x,lote);
+  });
+
+  let anas = ANALITICAS.filter(function(x){
+    return normalizarDep(x.dep) === depBuscado && perteneceLote(x,lote);
+  });
+
+  return {
+    entradas: entradas,
+    salidas: salidas,
+    adis: adis,
+    anas: anas
+  };
 }
 
 function textoMovimiento(x){
