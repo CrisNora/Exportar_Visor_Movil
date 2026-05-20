@@ -855,6 +855,60 @@ function tieneBloqueoHerenciaPorRemanente(dep,lote,ev){
   return false;
 }
 
+function loteResultanteMovimiento(m){
+  return campo(m,[
+    'lote_resultante',
+    'Lote_Resultante',
+    'lote_resultante_fila',
+    'Lote_Resultante_Fila'
+  ]) || campoDetalle(m,[
+    'Lote_Resultante',
+    'Lote Resultante',
+    'Lote_Resultante_Fila',
+    'Lote Resultante Fila'
+  ]);
+}
+
+function trasiegoPermiteHeredarAnalitica(m, dep, loteActual){
+  let origen = String(m.origen || '').trim();
+
+  if(!origen) return false;
+  if(origen === String(dep || '').trim()) return false;
+
+  let loteOrigen = loteOrigenMovimiento(m,loteActual);
+  let loteResultante = loteResultanteMovimiento(m);
+
+  // Regla principal:
+  // si el lote origen no es el mismo que el lote actual, NO se hereda analítica.
+  if(loteOrigen && loteActual && String(loteOrigen) !== String(loteActual)){
+    return false;
+  }
+
+  // Si la fila trae lote resultante y no coincide con el lote actual, tampoco.
+  if(loteResultante && loteActual && String(loteResultante) !== String(loteActual)){
+    return false;
+  }
+
+  // Si M40 dice que hay remanente o mezcla, NO se hereda.
+  let depBuscado = normalizarDep(dep);
+  let origenBuscado = origenMovimiento(m);
+  let destinoBuscado = destinoMovimiento(m);
+  let fechaM = String(m.fecha || '').trim();
+  let litrosM = Math.abs(litrosMovimiento(m));
+
+  if(destinoBuscado && destinoBuscado !== depBuscado){
+    return false;
+  }
+
+  let aviso = buscarAvisoRemanente(depBuscado, origenBuscado, fechaM, litrosM, loteActual);
+
+  if(aviso){
+    return false;
+  }
+
+  return true;
+}
+
 function analiticasConDepositoAnterior(dep,lote,ev){
   let anas = (ev.anas || []).slice();
   let yaIncluidas = {};
@@ -863,16 +917,13 @@ function analiticasConDepositoAnterior(dep,lote,ev){
     yaIncluidas[claveAnalitica(a)] = true;
   });
 
-  if(tieneBloqueoHerenciaPorRemanente(dep,lote,ev)){
-    return anas;
-  }
-
   (ev.entradas || []).forEach(function(m){
+
+    if(!trasiegoPermiteHeredarAnalitica(m, dep, lote)){
+      return;
+    }
+
     let origen = String(m.origen || '').trim();
-
-    if(!origen) return;
-    if(origen === String(dep || '').trim()) return;
-
     let loteAnterior = loteOrigenMovimiento(m,lote);
 
     let anaAnterior =
@@ -908,7 +959,6 @@ function analiticasConDepositoAnterior(dep,lote,ev){
 
   return anas;
 }
-
 function construirArbol(dep,lote,nivel,visitados){
   let clave = dep + '|' + lote;
 
