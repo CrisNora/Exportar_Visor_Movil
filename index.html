@@ -28,6 +28,7 @@ h1{font-size:18px;margin:0}.sub{font-size:12px;margin-top:4px}
 .adi{border-left-color:#8a2be2}
 .ana{border-left-color:#008060}
 .hig{border-left-color:#78481e}
+.warnitem{border-left-color:#d00000;background:#fff2cc;font-weight:bold}
 .vacio{padding:10px;color:#777}
 .error{background:#ffe0e0;border:1px solid red;padding:12px;border-radius:10px}
 </style>
@@ -54,6 +55,7 @@ let MAPAS = [];
 let MOVIMIENTOS = [];
 let ADICIONES = [];
 let ANALITICAS = [];
+let AUDIT_REMANENTES = [];
 let HIGIENE_DEPOSITOS = {};
 let LIMPIEZAS_DEPOSITOS = [];
 let mapaActual = 0;
@@ -223,7 +225,6 @@ function ordenarFechaDesc(lista){
       let fa = valorFecha(a.item.fecha);
       let fb = valorFecha(b.item.fecha);
 
-      // 1) Fecha más reciente primero
       if(fb !== fa){
         return fb - fa;
       }
@@ -231,12 +232,10 @@ function ordenarFechaDesc(lista){
       let oa = numeroOrdenRegistro(a.item, a.indice);
       let ob = numeroOrdenRegistro(b.item, b.indice);
 
-      // 2) Si es el mismo día, último registro anotado primero
       if(ob !== oa){
         return ob - oa;
       }
 
-      // 3) Si no hay Orden_Sistema, último elemento del JSON primero
       return b.indice - a.indice;
     })
     .map(function(x){
@@ -664,6 +663,198 @@ function ultimaAnaliticaDeDeposito(dep,lote){
   return ordenarFechaDesc(listaSoloDeposito)[0] || null;
 }
 
+function normalizarSiNo(x){
+  let t = normalizarTexto(x || '').trim();
+  return t === 'SI' || t === 'SÍ' || t === 'TRUE' || t === 'VERDADERO' || t === '1';
+}
+
+function fechaComparable(f){
+  return String(f || '').trim();
+}
+
+function numeroParecido(a,b){
+  a = Math.abs(Number(String(a || '0').replace(/\./g,'').replace(',','.')));
+  b = Math.abs(Number(String(b || '0').replace(/\./g,'').replace(',','.')));
+
+  if(isNaN(a) || isNaN(b)) return false;
+
+  return Math.abs(a - b) <= 1;
+}
+
+function buscarAvisoRemanente(depDestino, depOrigen, fecha, litros, loteActual){
+  depDestino = normalizarDep(depDestino);
+  depOrigen = normalizarDep(depOrigen);
+  fecha = fechaComparable(fecha);
+
+  let candidatos = AUDIT_REMANENTES.filter(function(a){
+    let d = normalizarDep(
+      campo(a,['dep_destino','Dep_Destino','Dep_Desti','destino','Destino']) ||
+      campoDetalle(a,['Dep_Destino','Dep Destino','Destino'])
+    );
+
+    if(d !== depDestino) return false;
+
+    let bloquea =
+      campo(a,['bloquear_herencia_analitica','Bloquear_Herencia_Analitica']) ||
+      campoDetalle(a,['Bloquear_Herencia_Analitica','Bloquear Herencia Analitica']);
+
+    let mezcla =
+      campo(a,['mezcla_con_remanente','Mezcla_Con_Remanente']) ||
+      campoDetalle(a,['Mezcla_Con_Remanente','Mezcla Con Remanente']);
+
+    if(!normalizarSiNo(bloquea) && !normalizarSiNo(mezcla)) return false;
+
+    let f = fechaComparable(campo(a,['fecha','Fecha']) || campoDetalle(a,['Fecha']));
+
+    if(fecha && f && f !== fecha) return false;
+
+    let o = normalizarDep(
+      campo(a,['dep_origen','Dep_Origen','Dep_Orig','origen','Origen']) ||
+      campoDetalle(a,['Dep_Origen','Dep Origen','Origen'])
+    );
+
+    if(depOrigen && o && o !== depOrigen) return false;
+
+    let litrosAudit =
+      campo(a,['litros_entrada','Litros_Entrada','volumen_l','Volumen_L']) ||
+      campoDetalle(a,['Litros_Entrada','Litros Entrada','Volumen_L','Volumen']);
+
+    if(litros && litrosAudit && !numeroParecido(litrosAudit, litros)) return false;
+
+    return true;
+  });
+
+  if(candidatos.length === 0){
+    return null;
+  }
+
+  return candidatos[0];
+}
+
+function textoAvisoRemanente(a){
+  if(!a) return '';
+
+  let depD =
+    campo(a,['dep_destino','Dep_Destino','Dep_Desti','destino','Destino']) ||
+    campoDetalle(a,['Dep_Destino','Dep Destino','Destino']);
+
+  let depO =
+    campo(a,['dep_origen','Dep_Origen','Dep_Orig','origen','Origen']) ||
+    campoDetalle(a,['Dep_Origen','Dep Origen','Origen']);
+
+  let litrosEntrada =
+    campo(a,['litros_entrada','Litros_Entrada','volumen_l','Volumen_L']) ||
+    campoDetalle(a,['Litros_Entrada','Litros Entrada','Volumen_L','Volumen']);
+
+  let volAntes =
+    campo(a,['vol_destino_antes_l','Vol_Destino_Antes_L','vol_destino_antes','Vol_Destino_Antes']) ||
+    campoDetalle(a,['Vol_Destino_Antes_L','Vol Destino Antes L','Vol_Destino_Antes']);
+
+  let loteAntes =
+    campo(a,['lote_destino_antes','Lote_Destino_Antes','lote_destino_ant','Lote_Destino_Ant']) ||
+    campoDetalle(a,['Lote_Destino_Antes','Lote Destino Antes']);
+
+  let tipoAntes =
+    campo(a,['tipo_destino_antes','Tipo_Destino_Antes']) ||
+    campoDetalle(a,['Tipo_Destino_Antes','Tipo Destino Antes']);
+
+  let nota =
+    campo(a,['nota_arbol_visor','Nota_Arbol_Visor','motivo','Motivo']) ||
+    campoDetalle(a,['Nota_Arbol_Visor','Motivo']);
+
+  let partes = [];
+
+  partes.push('MEZCLA CON REMANENTE EN DESTINO');
+
+  if(depD || volAntes){
+    partes.push((depD || 'El destino') + ' ya tenía ' + (volAntes || '?') + ' L antes de recibir vino');
+  }
+
+  if(depO || litrosEntrada){
+    partes.push('Entrada desde ' + (depO || '?') + ': ' + (litrosEntrada || '?') + ' L');
+  }
+
+  if(loteAntes){
+    partes.push('Lote previo en destino: ' + loteAntes);
+  }
+
+  if(tipoAntes){
+    partes.push('Tipo previo en destino: ' + tipoAntes);
+  }
+
+  partes.push('NO heredar analítica automáticamente');
+
+  if(nota){
+    partes.push(nota);
+  }
+
+  return partes.join(' | ');
+}
+
+function avisosRemanenteNodo(dep,lote,ev){
+  let depBuscado = normalizarDep(dep);
+  let avisos = [];
+  let vistos = {};
+
+  (ev.entradas || []).forEach(function(m){
+    let origen = origenMovimiento(m);
+    let destino = destinoMovimiento(m);
+
+    if(destino && destino !== depBuscado) return;
+
+    let fechaM = String(m.fecha || '').trim();
+    let litrosM = Math.abs(litrosMovimiento(m));
+
+    let aviso = buscarAvisoRemanente(depBuscado, origen, fechaM, litrosM, lote);
+
+    if(!aviso) return;
+
+    let clave = [
+      campo(aviso,['fecha','Fecha']),
+      campo(aviso,['fila_trasiego','Fila_Trasiego']),
+      campo(aviso,['dep_origen','Dep_Origen']),
+      campo(aviso,['dep_destino','Dep_Destino']),
+      campo(aviso,['litros_entrada','Litros_Entrada'])
+    ].join('|');
+
+    if(vistos[clave]) return;
+
+    vistos[clave] = true;
+    avisos.push({
+      fecha: campo(aviso,['fecha','Fecha']) || fechaM,
+      detalle: textoAvisoRemanente(aviso)
+    });
+  });
+
+  return avisos;
+}
+
+function tieneBloqueoHerenciaPorRemanente(dep,lote,ev){
+  let depBuscado = normalizarDep(dep);
+
+  let entradas = (ev && ev.entradas) ? ev.entradas : [];
+
+  for(let i = 0; i < entradas.length; i++){
+    let m = entradas[i];
+
+    let origen = origenMovimiento(m);
+    let destino = destinoMovimiento(m);
+
+    if(destino && destino !== depBuscado) continue;
+
+    let fechaM = String(m.fecha || '').trim();
+    let litrosM = Math.abs(litrosMovimiento(m));
+
+    let aviso = buscarAvisoRemanente(depBuscado, origen, fechaM, litrosM, lote);
+
+    if(aviso){
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function analiticasConDepositoAnterior(dep,lote,ev){
   let anas = (ev.anas || []).slice();
   let yaIncluidas = {};
@@ -671,6 +862,10 @@ function analiticasConDepositoAnterior(dep,lote,ev){
   anas.forEach(function(a){
     yaIncluidas[claveAnalitica(a)] = true;
   });
+
+  if(tieneBloqueoHerenciaPorRemanente(dep,lote,ev)){
+    return anas;
+  }
 
   (ev.entradas || []).forEach(function(m){
     let origen = String(m.origen || '').trim();
@@ -724,6 +919,7 @@ function construirArbol(dep,lote,nivel,visitados){
   visitados[clave] = true;
 
   let ev = eventosNodo(dep,lote);
+  let avisosRemanente = avisosRemanenteNodo(dep,lote,ev);
   let anasVisor = analiticasConDepositoAnterior(dep,lote,ev);
 
   let abierto = nivel === 0 ? ' open' : '';
@@ -732,6 +928,11 @@ function construirArbol(dep,lote,nivel,visitados){
     '<summary>'+('&nbsp;&nbsp;'.repeat(nivel))+'DEPÓSITO '+esc(dep)+' | Lote '+esc(lote || '-')+'</summary>';
 
   html += bloque('Entradas', pintarLista(ev.entradas,'mov'));
+
+  if(avisosRemanente.length > 0){
+    html += bloque('Mezclas con remanente / avisos', pintarLista(avisosRemanente,'warnitem'));
+  }
+
   html += bloque('Salidas', pintarLista(ev.salidas,'mov'));
   html += bloque('Adiciones', pintarLista(ev.adis,'adi'));
   html += bloque('Analíticas', pintarLista(anasVisor,'ana'));
@@ -832,6 +1033,14 @@ fetch('datos.json?nocache=' + Date.now())
   MOVIMIENTOS = data.movimientos || [];
   ADICIONES = data.adiciones || [];
   ANALITICAS = data.analiticas || [];
+
+  AUDIT_REMANENTES =
+    data.audit_remanentes_destino ||
+    data.AUDIT_REMANENTES_DESTINO ||
+    data.remanentes_destino ||
+    data.auditRemanentesDestino ||
+    [];
+
   HIGIENE_DEPOSITOS = data.higiene_depositos || {};
   LIMPIEZAS_DEPOSITOS = data.limpiezas_depositos || [];
 
