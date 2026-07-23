@@ -1,4 +1,4 @@
-<!doctype html>
+!doctype html>
 <html lang="es">
 <head>
 <meta charset="utf-8">
@@ -31,6 +31,32 @@ h1{font-size:18px;margin:0}.sub{font-size:12px;margin-top:4px}
 .warnitem{border-left-color:#d00000;background:#fff2cc;font-weight:bold}
 .vacio{padding:10px;color:#777}
 .error{background:#ffe0e0;border:1px solid red;padding:12px;border-radius:10px}
+
+.mainnav{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px;background:#202020}
+.mainnav button{border:1px solid #777;background:white;border-radius:10px;padding:11px 8px;font-size:14px;font-weight:bold;cursor:pointer}
+.mainnav button.active{background:#8a1c35;color:white;border-color:#8a1c35}
+.vista{display:none}.vista.active{display:block}
+.resumen-wrap{padding:8px}
+.resumen-cabecera{background:white;border:1px solid #ccc;border-radius:10px;padding:12px;margin-bottom:8px}
+.resumen-cabecera h2{font-size:20px;margin:0 0 8px 0}
+.resumen-buscador{width:100%;box-sizing:border-box;border:1px solid #aaa;border-radius:8px;padding:10px;font-size:16px}
+.resumen-contador{font-size:13px;color:#555;margin-top:7px}
+.ana-row{background:white;border:1px solid #ccc;border-radius:10px;margin-bottom:8px;overflow:hidden}
+.ana-row.alerta{border:2px solid #c00000;background:#ffebeb}
+.ana-row summary{list-style:none;cursor:pointer;padding:12px;font-weight:bold;line-height:1.4}
+.ana-row summary::-webkit-details-marker{display:none}
+.ana-row summary:before{content:'▶';display:inline-block;margin-right:8px;font-size:12px}
+.ana-row[open] summary:before{content:'▼'}
+.ana-resumen-linea{display:block}
+.ana-resumen-meta{display:block;font-weight:normal;font-size:13px;color:#555;margin-top:3px}
+.ana-detalle{padding:0 10px 10px 10px}
+.ana-lote{font-size:14px;margin:0 0 8px 2px}
+.ana-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:7px}
+.ana-celda{border:1px solid #ddd;border-radius:7px;padding:8px;background:#f8f8f8;min-height:48px;box-sizing:border-box}
+.ana-campo{font-size:11px;color:#555;text-transform:uppercase;display:block;margin-bottom:3px}
+.ana-valor{font-size:15px;word-break:break-word}
+.sin-resumen{background:white;border:1px solid #ccc;border-radius:10px;padding:18px;line-height:1.45}
+@media (max-width:520px){.ana-grid{grid-template-columns:1fr 1fr}.mainnav button{font-size:13px}}
 </style>
 </head>
 <body>
@@ -40,14 +66,31 @@ h1{font-size:18px;margin:0}.sub{font-size:12px;margin-top:4px}
 <div class="sub">Consulta generada desde Excel</div>
 </header>
 
-<div class="tabs" id="tabs"></div>
-
-<div class="wrap">
-  <div class="map">
-    <div class="canvas" id="canvas"></div>
-  </div>
-  <div class="panel" id="info">Cargando datos...</div>
+<div class="mainnav">
+  <button id="btnPlano" class="active" type="button" onclick="mostrarVista('plano')">Plano de depósitos</button>
+  <button id="btnResumen" type="button" onclick="mostrarVista('resumen')">Resumen de analíticas</button>
 </div>
+
+<section id="vistaPlano" class="vista active">
+  <div class="tabs" id="tabs"></div>
+  <div class="wrap">
+    <div class="map">
+      <div class="canvas" id="canvas"></div>
+    </div>
+    <div class="panel" id="info">Cargando datos...</div>
+  </div>
+</section>
+
+<section id="vistaResumen" class="vista">
+  <div class="resumen-wrap">
+    <div class="resumen-cabecera">
+      <h2>Resumen de analíticas</h2>
+      <input id="filtroResumen" class="resumen-buscador" type="search" placeholder="Buscar depósito, lote o tipo de vino" oninput="renderResumenAnaliticas()">
+      <div id="contadorResumen" class="resumen-contador"></div>
+    </div>
+    <div id="listaResumen"></div>
+  </div>
+</section>
 
 <script>
 let DEPOSITOS = {};
@@ -58,7 +101,107 @@ let ANALITICAS = [];
 let AUDIT_REMANENTES = [];
 let HIGIENE_DEPOSITOS = {};
 let LIMPIEZAS_DEPOSITOS = [];
+let RESUMEN_ANALITICAS = {columnas:[], filas:[]};
 let mapaActual = 0;
+let vistaActual = 'plano';
+
+
+function mostrarVista(vista){
+  vistaActual = vista === 'resumen' ? 'resumen' : 'plano';
+
+  document.getElementById('vistaPlano').classList.toggle('active', vistaActual === 'plano');
+  document.getElementById('vistaResumen').classList.toggle('active', vistaActual === 'resumen');
+  document.getElementById('btnPlano').classList.toggle('active', vistaActual === 'plano');
+  document.getElementById('btnResumen').classList.toggle('active', vistaActual === 'resumen');
+
+  if(vistaActual === 'resumen'){
+    renderResumenAnaliticas();
+  }
+}
+
+function estiloCeldaAnalitica(celda){
+  let estilos = [];
+
+  if(celda && celda.fondo){
+    estilos.push('background:'+String(celda.fondo));
+  }
+
+  if(celda && celda.color_texto){
+    estilos.push('color:'+String(celda.color_texto));
+  }
+
+  if(celda && celda.negrita){
+    estilos.push('font-weight:bold');
+  }
+
+  return estilos.join(';');
+}
+
+function renderResumenAnaliticas(){
+  let contenedor = document.getElementById('listaResumen');
+  let contador = document.getElementById('contadorResumen');
+
+  if(!contenedor || !contador) return;
+
+  let filas = (RESUMEN_ANALITICAS && Array.isArray(RESUMEN_ANALITICAS.filas))
+    ? RESUMEN_ANALITICAS.filas.slice()
+    : [];
+
+  let filtro = normalizarTexto((document.getElementById('filtroResumen') || {}).value || '');
+
+  if(filtro){
+    filas = filas.filter(function(f){
+      let texto = [f.deposito, f.lote, f.tipo, f.fecha]
+        .concat((f.celdas || []).map(function(c){ return (c.campo || '')+' '+(c.valor || ''); }))
+        .join(' ');
+      return normalizarTexto(texto).includes(filtro);
+    });
+  }
+
+  filas.sort(function(a,b){
+    return String(a.deposito || '').localeCompare(String(b.deposito || ''), 'es', {numeric:true});
+  });
+
+  contador.textContent = filas.length + (filas.length === 1 ? ' depósito' : ' depósitos') +
+    ((RESUMEN_ANALITICAS && RESUMEN_ANALITICAS.generado) ? ' | Actualizado: '+RESUMEN_ANALITICAS.generado : '');
+
+  if(filas.length === 0){
+    let tieneDatos = RESUMEN_ANALITICAS && Array.isArray(RESUMEN_ANALITICAS.filas) && RESUMEN_ANALITICAS.filas.length > 0;
+    contenedor.innerHTML = tieneDatos
+      ? '<div class="sin-resumen">No hay resultados con ese filtro.</div>'
+      : '<div class="sin-resumen"><b>El resumen todavía no está incluido en datos.json.</b><br>Se cargará automáticamente cuando Excel publique el visor con la nueva macro.</div>';
+    return;
+  }
+
+  contenedor.innerHTML = filas.map(function(f){
+    let celdas = (f.celdas || []).filter(function(c){
+      let campoNormal = normalizarTexto(c.campo || '').replace(/[_\s]/g,'');
+      let tieneValor = String(c.valor === undefined || c.valor === null ? '' : c.valor).trim() !== '';
+      let esCampoInterno = campoNormal === 'ORDENSISTEMA' || campoNormal === 'OBSERVACIONES';
+      return tieneValor && !esCampoInterno;
+    });
+
+    let detalle = celdas.length > 0
+      ? '<div class="ana-grid">' + celdas.map(function(c){
+          return '<div class="ana-celda" style="'+esc(estiloCeldaAnalitica(c))+'">' +
+            '<span class="ana-campo">'+esc(c.campo || '-')+'</span>' +
+            '<span class="ana-valor">'+esc(c.valor || '-')+'</span>' +
+            '</div>';
+        }).join('') + '</div>'
+      : '<div class="vacio">Sin parámetros analíticos disponibles.</div>';
+
+    return '<details class="ana-row'+(f.alerta ? ' alerta' : '')+'">' +
+      '<summary>' +
+        '<span class="ana-resumen-linea">'+esc(f.deposito || '-')+' | '+esc(f.tipo || '-')+' | '+fmt(f.volumen)+' L</span>' +
+        '<span class="ana-resumen-meta">Fecha usada: '+esc(f.fecha || '-')+(f.alerta ? ' | AVISO DEL EXCEL' : '')+'</span>' +
+      '</summary>' +
+      '<div class="ana-detalle">' +
+        '<div class="ana-lote"><b>Lote actual:</b> '+esc(f.lote || '-')+'</div>' +
+        detalle +
+      '</div>' +
+    '</details>';
+  }).join('');
+}
 
 function fmt(n){
   return Math.round(Number(n || 0)).toLocaleString('es-ES');
@@ -1093,8 +1236,10 @@ fetch('datos.json?nocache=' + Date.now())
 
   HIGIENE_DEPOSITOS = data.higiene_depositos || {};
   LIMPIEZAS_DEPOSITOS = data.limpiezas_depositos || [];
+  RESUMEN_ANALITICAS = data.resumen_analiticas || {columnas:[], filas:[]};
 
   render();
+  renderResumenAnaliticas();
   document.getElementById('info').innerHTML = 'Pulsa un depósito.';
 })
 .catch(function(e){
