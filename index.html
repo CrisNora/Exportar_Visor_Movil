@@ -1,4 +1,4 @@
-!doctype html>
+<!doctype html>
 <html lang="es">
 <head>
 <meta charset="utf-8">
@@ -57,6 +57,25 @@ h1{font-size:18px;margin:0}.sub{font-size:12px;margin-top:4px}
 .ana-valor{font-size:15px;word-break:break-word}
 .sin-resumen{background:white;border:1px solid #ccc;border-radius:10px;padding:18px;line-height:1.45}
 @media (max-width:520px){.ana-grid{grid-template-columns:1fr 1fr}.mainnav button{font-size:13px}}
+
+/* FASE 2: historial simplificado y fermentación */
+.historial-resumen{display:grid;gap:8px;padding:8px}
+.hist-card{background:white;border:1px solid #ddd;border-radius:8px;padding:10px;line-height:1.45;font-size:14px}
+.hist-card .muted{color:#666}
+.ferm-panel{padding:10px}
+.ferm-meta{background:#fafafa;border:1px solid #e3e3e3;border-radius:8px;padding:9px;line-height:1.4;font-size:14px;margin-bottom:8px}
+.ferm-controls{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+.ferm-controls button{border:1px solid #888;background:white;border-radius:8px;padding:7px 10px;font-weight:bold;cursor:pointer}
+.ferm-controls button.active{background:#202020;color:white}
+.ferm-chart{width:100%;overflow-x:auto;border:1px solid #ddd;border-radius:8px;background:white}
+.ferm-chart svg{display:block;min-width:650px;width:100%;height:330px}
+.ferm-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;margin:8px 0;color:#444}
+.ferm-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:middle}
+.ferm-eventos{margin-top:8px}
+.ferm-evento{border-left:4px solid #8a2be2;background:#faf7ff;border-radius:6px;padding:7px;margin-top:6px;font-size:13px;line-height:1.35}
+.ferm-evento.descube{border-left-color:#2d7dd2;background:#f4f9ff}
+.ferm-sin{padding:12px;color:#666}
+
 </style>
 </head>
 <body>
@@ -102,6 +121,8 @@ let AUDIT_REMANENTES = [];
 let HIGIENE_DEPOSITOS = {};
 let LIMPIEZAS_DEPOSITOS = [];
 let RESUMEN_ANALITICAS = {columnas:[], filas:[]};
+let FERMENTACIONES = {procesos:[], diario:[]};
+let MODO_GRAFICO_FERM = {};
 let mapaActual = 0;
 let vistaActual = 'plano';
 
@@ -137,6 +158,29 @@ function estiloCeldaAnalitica(celda){
   return estilos.join(';');
 }
 
+const ORDEN_FISICO_DEPOSITOS = {M:0,A:1,F:2,I:3,T:4,B:5,E:6};
+
+function partesDepositoResumen(dep){
+  let t = normalizarTexto(dep || '').replace(/\s+/g,'');
+  let m = t.match(/^([A-Z]+)(\d+)?/);
+  return {
+    grupo: m ? m[1] : t,
+    numero: m && m[2] ? Number(m[2]) : 999999,
+    texto: t
+  };
+}
+
+function compararDepositosResumen(depA,depB){
+  let a = partesDepositoResumen(depA);
+  let b = partesDepositoResumen(depB);
+  let oa = Object.prototype.hasOwnProperty.call(ORDEN_FISICO_DEPOSITOS,a.grupo) ? ORDEN_FISICO_DEPOSITOS[a.grupo] : 99;
+  let ob = Object.prototype.hasOwnProperty.call(ORDEN_FISICO_DEPOSITOS,b.grupo) ? ORDEN_FISICO_DEPOSITOS[b.grupo] : 99;
+  if(oa !== ob) return oa-ob;
+  if(a.grupo !== b.grupo) return a.grupo.localeCompare(b.grupo,'es');
+  if(a.numero !== b.numero) return a.numero-b.numero;
+  return a.texto.localeCompare(b.texto,'es',{numeric:true});
+}
+
 function renderResumenAnaliticas(){
   let contenedor = document.getElementById('listaResumen');
   let contador = document.getElementById('contadorResumen');
@@ -159,7 +203,7 @@ function renderResumenAnaliticas(){
   }
 
   filas.sort(function(a,b){
-    return String(a.deposito || '').localeCompare(String(b.deposito || ''), 'es', {numeric:true});
+    return compararDepositosResumen(a.deposito,b.deposito);
   });
 
   contador.textContent = filas.length + (filas.length === 1 ? ' depósito' : ' depósitos') +
@@ -188,7 +232,7 @@ function renderResumenAnaliticas(){
             '<span class="ana-valor">'+esc(c.valor || '-')+'</span>' +
             '</div>';
         }).join('') + '</div>'
-      : '<div class="vacio">Sin parámetros analíticos disponibles.</div>';
+      : '<div class="vacio">Sin analítica para el lote actual: <b>'+esc(f.lote || '-')+'</b>.</div>';
 
     return '<details class="ana-row'+(f.alerta ? ' alerta' : '')+'">' +
       '<summary>' +
@@ -1157,6 +1201,223 @@ function construirArbol(dep,lote,nivel,visitados){
   return html;
 }
 
+
+function fechaOrden(x){
+  return valorFecha((x && (x.fecha || x.fecha_registro || x.Fecha)) || '');
+}
+
+function ultimoRegistroLimpieza(dep){
+  let buscado=normalizarDep(dep);
+  return (LIMPIEZAS_DEPOSITOS || [])
+    .filter(function(x){return normalizarDep(x.dep || x.deposito)===buscado;})
+    .sort(function(a,b){return fechaOrden(b)-fechaOrden(a);})[0] || null;
+}
+
+function ultimoContenidoDeposito(dep,d){
+  let reg=ultimoRegistroLimpieza(dep);
+  if(reg){
+    let tipo=campo(reg,['ultimo_contenido','contenido_anterior','tipo_vino','Tipo_Vino']);
+    let lote=campo(reg,['lote_anterior','Lote_Anterior','lote','Lote']);
+    let volumen=campo(reg,['volumen','Volumen','volumen_anterior','Volumen_Anterior']);
+    if(tipo || lote || volumen){
+      return {tipo:tipo,lote:lote,volumen:volumen,fecha:reg.fecha || '',origen:'limpieza'};
+    }
+  }
+
+  let actual=String((d && d.lote) || '');
+  let candidatos=(MOVIMIENTOS || []).filter(function(x){
+    let o=origenMovimiento(x);
+    if(o!==normalizarDep(dep)) return false;
+    let l=loteOrigenMovimiento(x,actual);
+    return !actual || !l || String(l)!==actual;
+  });
+  let mov=ordenarFechaDesc(candidatos)[0] || null;
+  if(!mov) return null;
+  return {
+    tipo:campo(mov,['tipo_vino','Tipo_Vino']) || campoDetalle(mov,['Tipo_Origen_Momento','Tipo Vino']),
+    lote:loteOrigenMovimiento(mov,actual),
+    volumen:Math.abs(litrosMovimiento(mov)) || '',
+    fecha:mov.fecha || '',
+    origen:'movimiento'
+  };
+}
+
+function fichaUltimoContenido(dep,d){
+  let u=ultimoContenidoDeposito(dep,d);
+  if(!u) return '<div class="vacio">Sin contenido anterior localizado.</div>';
+  let vol=String(u.volumen || '').trim();
+  if(vol && !isNaN(Number(String(vol).replace(/\./g,'').replace(',','.')))){
+    vol=fmt(Number(String(vol).replace(/\./g,'').replace(',','.')))+' L';
+  }
+  return '<div class="historial-resumen"><div class="hist-card">'+
+    '<b>Producto anterior:</b> '+esc(u.tipo || '-')+'<br>'+
+    '<b>Lote anterior:</b> '+esc(u.lote || '-')+'<br>'+
+    '<b>Volumen:</b> '+esc(vol || '-')+'<br>'+
+    '<b>Fecha de vaciado/registro:</b> '+esc(u.fecha || '-')+
+    '</div></div>';
+}
+
+function fichaHigieneSimplificada(dep,d){
+  let h=higieneDep(dep,d);
+  let hist=(LIMPIEZAS_DEPOSITOS || []).filter(function(x){
+    return normalizarDep(x.dep || x.deposito)===normalizarDep(dep);
+  });
+  let actual=h ? '<div class="hist-card">'+
+    '<b>Estado:</b> '+esc(h.estado || h.texto || '-')+'<br>'+
+    '<b>Última limpieza:</b> '+esc(h.tipo_limpieza || '-')+'<br>'+
+    '<b>Fecha:</b> '+esc(h.fecha || '-')+'<br>'+
+    '<b>Realizado por:</b> '+esc(h.realizado_por || h.operario || '-')+'<br>'+
+    '<b>Registrado por:</b> '+esc(h.registrado_por || '-')+'<br>'+
+    '<b>Apto para:</b> '+esc(h.apto_para || h.aptitud || '-')+'<br>'+
+    '<b>Observaciones:</b> '+esc(h.observaciones || h.incidencia || '-')+
+    '</div>' : '<div class="vacio">Sin estado de higiene registrado.</div>';
+  return '<div class="historial-resumen">'+actual+'</div>'+bloque('Historial de higiene',pintarLista(hist,'hig'));
+}
+
+function bloqueHistorialDeposito(dep,d){
+  let contenido='';
+  contenido += bloque('Último contenido',fichaUltimoContenido(dep,d));
+  contenido += bloque('Higiene',fichaHigieneSimplificada(dep,d));
+  return bloque('Historial del depósito',contenido);
+}
+
+function procesoPorDeposito(dep,lote){
+  let procesos=(FERMENTACIONES && Array.isArray(FERMENTACIONES.procesos)) ? FERMENTACIONES.procesos : [];
+  let exactos=procesos.filter(function(p){
+    return normalizarDep(p.deposito_actual)===normalizarDep(dep) && (!lote || String(p.lote_actual || '')===String(lote));
+  });
+  exactos.sort(function(a,b){
+    let ea=normalizarTexto(a.estado)==='ACTIVO' ? 1 : 0;
+    let eb=normalizarTexto(b.estado)==='ACTIVO' ? 1 : 0;
+    if(eb!==ea) return eb-ea;
+    return valorFecha(b.fecha_inicio)-valorFecha(a.fecha_inicio);
+  });
+  if(exactos[0]) return exactos[0];
+
+  let diario=(FERMENTACIONES && Array.isArray(FERMENTACIONES.diario)) ? FERMENTACIONES.diario : [];
+  let lect=diario.filter(function(x){
+    return normalizarDep(x.deposito)===normalizarDep(dep) && (!lote || String(x.lote || '')===String(lote));
+  }).sort(function(a,b){return valorFecha(b.fecha)-valorFecha(a.fecha);})[0];
+  if(!lect) return null;
+  return procesos.filter(function(p){return String(p.id)===String(lect.proceso_id);})[0] || {id:lect.proceso_id,deposito_actual:dep,lote_actual:lote};
+}
+
+function lecturasProceso(id){
+  return ((FERMENTACIONES && FERMENTACIONES.diario) || [])
+    .filter(function(x){return String(x.proceso_id || '')===String(id || '');})
+    .sort(function(a,b){return valorFecha(a.fecha)-valorFecha(b.fecha);});
+}
+
+function numeroFerm(v){
+  if(v===null || v===undefined || String(v).trim()==='') return null;
+  let n=Number(String(v).replace(/\./g,'').replace(',','.'));
+  return isNaN(n)?null:n;
+}
+
+function puntosEscala(valores,minY,maxY,alto,margen){
+  let rango=maxY-minY || 1;
+  return valores.map(function(v){return alto-margen-((v-minY)/rango)*(alto-2*margen);});
+}
+
+function svgGraficoFermentacion(proceso,modo){
+  let lect=lecturasProceso(proceso.id);
+  if(!lect.length) return '<div class="ferm-sin">El proceso existe, pero todavía no tiene lecturas de densidad o temperatura.</div>';
+  let dens=lect.map(function(x){return numeroFerm(x.densidad);});
+  let temp=lect.map(function(x){return numeroFerm(x.temperatura);});
+  let hayDens=dens.some(function(x){return x!==null;});
+  let hayTemp=temp.some(function(x){return x!==null;});
+  if(!hayDens && !hayTemp) return '<div class="ferm-sin">Sin lecturas numéricas para representar.</div>';
+  if(modo==='densidad' && !hayDens) modo='temperatura';
+  if(modo==='temperatura' && !hayTemp) modo='densidad';
+
+  let W=Math.max(650,lect.length*80),H=300,M=46;
+  let xs=lect.map(function(_,i){return lect.length===1?W/2:M+i*(W-2*M)/(lect.length-1);});
+  let dvals=dens.filter(function(x){return x!==null;});
+  let tvals=temp.filter(function(x){return x!==null;});
+  let dmin=dvals.length?Math.min.apply(null,dvals):0,dmax=dvals.length?Math.max.apply(null,dvals):1;
+  let tmin=tvals.length?Math.min.apply(null,tvals):0,tmax=tvals.length?Math.max.apply(null,tvals):1;
+  if(dmin===dmax){dmin-=1;dmax+=1;} if(tmin===tmax){tmin-=1;tmax+=1;}
+  let dy=puntosEscala(dens.map(function(x){return x===null?dmin:x;}),dmin,dmax,H,M);
+  let ty=puntosEscala(temp.map(function(x){return x===null?tmin:x;}),tmin,tmax,H,M);
+  function path(vals,ys){
+    let partes=[];
+    vals.forEach(function(v,i){if(v!==null) partes.push((partes.length?'L':'M')+xs[i].toFixed(1)+' '+ys[i].toFixed(1));});
+    return partes.join(' ');
+  }
+  let svg='<div class="ferm-chart"><svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Gráfico de fermentación">';
+  svg+='<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="white"/>';
+  for(let g=0;g<=4;g++){let y=M+g*(H-2*M)/4;svg+='<line x1="'+M+'" y1="'+y+'" x2="'+(W-M)+'" y2="'+y+'" stroke="#e5e5e5"/>';}
+  svg+='<line x1="'+M+'" y1="'+(H-M)+'" x2="'+(W-M)+'" y2="'+(H-M)+'" stroke="#666"/>';
+  if((modo==='densidad'||modo==='ambas')&&hayDens){
+    svg+='<path d="'+path(dens,dy)+'" fill="none" stroke="#1f4e79" stroke-width="3"/>';
+    dens.forEach(function(v,i){if(v!==null)svg+='<circle cx="'+xs[i]+'" cy="'+dy[i]+'" r="4" fill="#1f4e79"><title>Densidad '+v+'</title></circle>';});
+    svg+='<text x="6" y="20" font-size="12" fill="#1f4e79">Densidad '+dmin+'–'+dmax+'</text>';
+  }
+  if((modo==='temperatura'||modo==='ambas')&&hayTemp){
+    svg+='<path d="'+path(temp,ty)+'" fill="none" stroke="#c00000" stroke-width="3"/>';
+    temp.forEach(function(v,i){if(v!==null)svg+='<circle cx="'+xs[i]+'" cy="'+ty[i]+'" r="4" fill="#c00000"><title>Temperatura '+v+' °C</title></circle>';});
+    svg+='<text x="'+(W-165)+'" y="20" font-size="12" fill="#c00000">Temperatura '+tmin+'–'+tmax+' °C</text>';
+  }
+  lect.forEach(function(x,i){
+    let f=String(x.fecha||'');
+    svg+='<text x="'+xs[i]+'" y="'+(H-15)+'" text-anchor="middle" font-size="10" fill="#555">'+esc(f.substring(0,5))+'</text>';
+    if(x.adicion_producto || x.adicion_tipo){svg+='<polygon points="'+xs[i]+','+(M-2)+' '+(xs[i]-6)+','+(M+9)+' '+(xs[i]+6)+','+(M+9)+'" fill="#8a2be2"><title>Adición</title></polygon>';}
+    if(x.descube_estado){svg+='<rect x="'+(xs[i]-5)+'" y="'+(M+13)+'" width="10" height="10" fill="#2d7dd2"><title>Descube</title></rect>';}
+  });
+  svg+='</svg></div>';
+  return svg;
+}
+
+function eventosFermentacion(proceso){
+  let eventos=[];
+  lecturasProceso(proceso.id).forEach(function(x){
+    if(x.adicion_producto || x.adicion_tipo || x.adicion_estado){
+      eventos.push('<div class="ferm-evento"><b>'+esc(x.fecha || '-')+' · Adición</b><br>'+esc([x.adicion_tipo,x.adicion_producto,x.adicion_cantidad].filter(Boolean).join(' · ') || x.adicion_estado)+'</div>');
+    }
+    if(x.descube_estado){
+      eventos.push('<div class="ferm-evento descube"><b>'+esc(x.fecha || '-')+' · Descube</b><br>'+esc([x.descube_estado,x.litros_descubados ? fmt(x.litros_descubados)+' L' : '',x.merma_descube ? 'Merma '+fmt(x.merma_descube)+' L' : ''].filter(Boolean).join(' · '))+'</div>');
+    }
+  });
+  return eventos.length?'<div class="ferm-eventos">'+eventos.join('')+'</div>':'';
+}
+
+function cambiarModoGrafico(id,modo){
+  MODO_GRAFICO_FERM[id]=modo;
+  let cont=document.getElementById('ferm_'+String(id).replace(/[^a-zA-Z0-9_-]/g,'_'));
+  if(cont){
+    let p=((FERMENTACIONES.procesos||[]).filter(function(x){return String(x.id)===String(id);})[0]) || {id:id};
+    cont.innerHTML=contenidoFermentacion(p);
+  }
+}
+
+function contenidoFermentacion(p){
+  let modo=MODO_GRAFICO_FERM[p.id] || 'ambas';
+  let sid=String(p.id || '').replace(/[^a-zA-Z0-9_-]/g,'_');
+  let html='<div class="ferm-panel">'+
+    '<div class="ferm-meta"><b>Proceso:</b> '+esc(p.id || '-')+'<br><b>Estado:</b> '+esc(p.estado || '-')+'<br><b>Inicio:</b> '+esc(p.fecha_inicio || '-')+'<br><b>Protocolo:</b> '+esc(p.protocolo || '-')+'</div>'+
+    '<div class="ferm-controls">'+
+      '<button class="'+(modo==='densidad'?'active':'')+'" onclick="cambiarModoGrafico(&quot;'+esc(p.id)+'&quot;,&quot;densidad&quot;)">Densidad</button>'+
+      '<button class="'+(modo==='temperatura'?'active':'')+'" onclick="cambiarModoGrafico(&quot;'+esc(p.id)+'&quot;,&quot;temperatura&quot;)">Temperatura</button>'+
+      '<button class="'+(modo==='ambas'?'active':'')+'" onclick="cambiarModoGrafico(&quot;'+esc(p.id)+'&quot;,&quot;ambas&quot;)">Ambas</button>'+
+    '</div>'+svgGraficoFermentacion(p,modo)+eventosFermentacion(p);
+  let padres=Array.isArray(p.padres)?p.padres:[];
+  if(padres.length){
+    html+=bloque('Fermentaciones de origen',padres.map(function(id){
+      let pp=(FERMENTACIONES.procesos||[]).filter(function(x){return String(x.id)===String(id);})[0];
+      return pp?'<details class="box"><summary>'+esc(pp.id)+'</summary>'+contenidoFermentacion(pp)+'</details>':'<div class="vacio">'+esc(id)+'</div>';
+    }).join(''));
+  }
+  html+='</div>';
+  return html;
+}
+
+function bloqueFermentacion(dep,lote){
+  let p=procesoPorDeposito(dep,lote);
+  if(!p) return '';
+  let sid=String(p.id || '').replace(/[^a-zA-Z0-9_-]/g,'_');
+  return '<details class="box" open><summary>Gráfica de fermentación</summary><div id="ferm_'+sid+'">'+contenidoFermentacion(p)+'</div></details>';
+}
+
 function fichaHigiene(dep,d){
   let h = higieneDep(dep,d);
 
@@ -1201,11 +1462,12 @@ function showDep(dep,d){
     '<b>Lote actual:</b> '+esc(lote || '-')+
     '</div>';
 
-  if(Number(d.volumen || 0) <= 0){
-    html += bloque('Limpieza / aptitud del depósito', fichaHigiene(dep,d));
-  }
+  html += bloqueFermentacion(dep,lote);
+  html += bloqueHistorialDeposito(dep,d);
 
-  html += construirArbol(dep,lote,0,{});
+  if(lote){
+    html += '<details class="box"><summary>Historial del lote actual</summary>'+construirArbol(dep,lote,0,{})+'</details>';
+  }
 
   document.getElementById('info').innerHTML = html;
 }
@@ -1237,6 +1499,7 @@ fetch('datos.json?nocache=' + Date.now())
   HIGIENE_DEPOSITOS = data.higiene_depositos || {};
   LIMPIEZAS_DEPOSITOS = data.limpiezas_depositos || [];
   RESUMEN_ANALITICAS = data.resumen_analiticas || {columnas:[], filas:[]};
+  FERMENTACIONES = data.fermentaciones || {procesos:[], diario:[]};
 
   render();
   renderResumenAnaliticas();
@@ -1250,3 +1513,4 @@ fetch('datos.json?nocache=' + Date.now())
 
 </body>
 </html>
+
