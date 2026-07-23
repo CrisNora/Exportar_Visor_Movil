@@ -122,6 +122,7 @@ let HIGIENE_DEPOSITOS = {};
 let LIMPIEZAS_DEPOSITOS = [];
 let RESUMEN_ANALITICAS = {columnas:[], filas:[]};
 let FERMENTACIONES = {procesos:[], diario:[]};
+let COLORES_TIPO_VINO = {};
 let MODO_GRAFICO_FERM = {};
 let mapaActual = 0;
 let vistaActual = 'plano';
@@ -251,18 +252,37 @@ function fmt(n){
   return Math.round(Number(n || 0)).toLocaleString('es-ES');
 }
 
-function colorDep(d){
-  if(!d || Number(d.volumen || 0) <= 0) return '#f5f5f5';
-  if(d.color === 'TINTO') return '#dc0000';
-  if(d.color === 'BLANCO') return '#ffe650';
-  if(d.color === 'ROSADO') return '#f4aac8';
-  return '#aaa';
-}
-
 function normalizarTexto(x){
   let t = String(x || '').toUpperCase();
-  t = t.replace(/Á/g,'A').replace(/É/g,'E').replace(/Í/g,'I').replace(/Ó/g,'O').replace(/Ú/g,'U');
+  t = t.replace(/Á/g,'A').replace(/É/g,'E').replace(/Í/g,'I').replace(/Ó/g,'O').replace(/Ú/g,'U').replace(/Ü/g,'U');
   return t;
+}
+
+function normalizarClaveTipo(x){
+  return normalizarTexto(String(x || '').replace(/\u00a0/g,' ')).trim().replace(/\s+/g,' ');
+}
+
+function colorLogicoDep(d){
+  if(!d || Number(d.volumen || 0) <= 0) return 'VACIO';
+
+  let clave = normalizarClaveTipo(d.tipo || '');
+  let desdeTabla = clave && Object.prototype.hasOwnProperty.call(COLORES_TIPO_VINO,clave)
+    ? COLORES_TIPO_VINO[clave]
+    : '';
+
+  let color = normalizarTexto(desdeTabla || d.color || '').trim();
+
+  if(color === 'TINTO' || color === 'BLANCO' || color === 'ROSADO') return color;
+  return 'SIN CLASIFICAR';
+}
+
+function colorDep(d){
+  let color = colorLogicoDep(d);
+  if(color === 'VACIO') return '#f5f5f5';
+  if(color === 'TINTO') return '#dc0000';
+  if(color === 'BLANCO') return '#ffe650';
+  if(color === 'ROSADO') return '#f4aac8';
+  return '#aaa';
 }
 
 function colorHigiene(h){
@@ -322,7 +342,7 @@ function higieneDep(dep,d){
 }
 
 function textColor(d,h){
-  if(d && d.color === 'TINTO' && Number(d.volumen || 0) > 0){
+  if(d && colorLogicoDep(d) === 'TINTO' && Number(d.volumen || 0) > 0){
     return 'white';
   }
 
@@ -1500,6 +1520,7 @@ fetch('datos.json?nocache=' + Date.now())
   LIMPIEZAS_DEPOSITOS = data.limpiezas_depositos || [];
   RESUMEN_ANALITICAS = data.resumen_analiticas || {columnas:[], filas:[]};
   FERMENTACIONES = data.fermentaciones || {procesos:[], diario:[]};
+  COLORES_TIPO_VINO = data.colores_tipo_vino || {};
 
   render();
   renderResumenAnaliticas();
@@ -1513,4 +1534,5 @@ fetch('datos.json?nocache=' + Date.now())
 
 </body>
 </html>
+
 
