@@ -1665,881 +1665,292 @@ function lecturasProceso(id){
     .filter(function(x){return String(x.proceso_id || '')===String(id || '');})
     .sort(function(a,b){return valorFecha(a.fecha)-valorFecha(b.fecha);});
 }
+function lecturasGraficoProceso(id){
+  let raw = lecturasProceso(id);
+  let porDia = {};
+  let claves = [];
 
-function numeroFerm(v){
-  if(v===null || v===undefined || String(v).trim()==='') return null;
+  raw.forEach(function(x,indice){
+    let fecha = String(x.fecha || '').trim();
+    let clave = fecha || ('SIN_FECHA_'+indice);
 
-  let s=String(v).trim().replace(/\s/g,'');
-
-  if(!s) return null;
-
-  /*
-    Admite tanto formato español como el que llega desde JSON:
-    30,5  -> 30.5
-    30.5  -> 30.5
-    1.094 -> 1094
-    1,094 -> 1094
-  */
-  if(s.indexOf('.')>=0 && s.indexOf(',')>=0){
-    s=s.replace(/\./g,'').replace(',','.');
-  }
-  else if(s.indexOf(',')>=0){
-    if(/^[-+]?\d{1,3}(,\d{3})+$/.test(s)){
-      s=s.replace(/,/g,'');
+    if(!porDia[clave]){
+      porDia[clave] = Object.assign({},x,{__indice:indice});
+      claves.push(clave);
     }else{
-      s=s.replace(',','.');
-    }
-  }
-  else if(s.indexOf('.')>=0){
-    if(/^[-+]?\d{1,3}(\.\d{3})+$/.test(s)){
-      s=s.replace(/\./g,'');
-    }
-  }
+      let d = porDia[clave];
 
-  let n=Number(s);
-  return isNaN(n)?null:n;
+      /* Igual que la tabla diaria del Excel: conserva la última lectura válida del día */
+      if(numeroFerm(x.densidad) !== null) d.densidad = x.densidad;
+      if(numeroFerm(x.temperatura) !== null) d.temperatura = x.temperatura;
+
+      if(x.descube_estado) d.descube_estado = x.descube_estado;
+      if(x.litros_descubados) d.litros_descubados = x.litros_descubados;
+      if(x.merma_descube) d.merma_descube = x.merma_descube;
+    }
+  });
+
+  return claves.map(function(k){ return porDia[k]; })
+    .sort(function(a,b){
+      let fa = valorFecha(a.fecha);
+      let fb = valorFecha(b.fecha);
+      if(fa !== fb) return fa-fb;
+      return (a.__indice || 0) - (b.__indice || 0);
+    });
 }
 
-function puntosEscala(valores,minY,maxY,alto,margen){
-  let rango=maxY-minY || 1;
-  return valores.map(function(v){return alto-margen-((v-minY)/rango)*(alto-2*margen);});
+
+  function numeroFerm(v){
+  if(v === null || v === undefined || String(v).trim() === '') return null;
+
+  if(typeof v === 'number'){
+    return Number.isFinite(v) ? v : null;
+  }
+
+  let s = String(v).trim().replace(/\s/g,'');
+
+  if(s.includes(',') && s.includes('.')){
+    if(s.lastIndexOf(',') > s.lastIndexOf('.')){
+      s = s.replace(/\./g,'').replace(',','.');
+    }else{
+      s = s.replace(/,/g,'');
+    }
+  }else if(s.includes(',')){
+    s = s.replace(',','.');
+  }
+
+  let n = Number(s);
+
+  /* Compatibilidad si Excel exportase una densidad como "1.094" */
+  if(!isNaN(n) && n > 0 && n < 10 && /^\d{1,3}\.\d{3}$/.test(s)){
+    n = Number(s.replace('.',''));
+  }
+
+  return isNaN(n) ? null : n;
 }
 
-function svgGraficoFermentacion(proceso,modo){
 
-  let lect=lecturasProceso(proceso.id);
+
+ function svgGraficoFermentacion(proceso,modo){
+
+  /* Para el gráfico usamos UNA lectura consolidada por día,
+     exactamente como la tabla/gráfico de Excel. */
+  let lect = lecturasGraficoProceso(proceso.id);
 
   if(!lect.length){
     return '<div class="ferm-sin">El proceso existe, pero todavía no tiene lecturas de densidad o temperatura.</div>';
   }
 
-  let dens=lect.map(function(x){
-    return numeroFerm(x.densidad);
-  });
+  let dens = lect.map(function(x){ return numeroFerm(x.densidad); });
+  let temp = lect.map(function(x){ return numeroFerm(x.temperatura); });
 
-  let temp=lect.map(function(x){
-    return numeroFerm(x.temperatura);
-  });
-
-  let hayDens=dens.some(function(x){
-    return x!==null;
-  });
-
-  let hayTemp=temp.some(function(x){
-    return x!==null;
-  });
+  let hayDens = dens.some(function(x){ return x !== null; });
+  let hayTemp = temp.some(function(x){ return x !== null; });
 
   if(!hayDens && !hayTemp){
     return '<div class="ferm-sin">Sin lecturas numéricas para representar.</div>';
   }
 
-  if(modo==='densidad' && !hayDens){
-    modo='temperatura';
-  }
+  if(modo === 'densidad' && !hayDens) modo = 'temperatura';
+  if(modo === 'temperatura' && !hayTemp) modo = 'densidad';
 
-  if(modo==='temperatura' && !hayTemp){
-    modo='densidad';
-  }
+  let W = Math.max(650, lect.length * 135);
+  let H = 370;
+  let ML = 72;
+  let MR = 62;
+  let TOP = 54;
+  let BOTTOM = 48;
+  let GRAF_H = H - TOP - BOTTOM;
 
-
-  /* Más espacio arriba para escribir las adiciones */
-  let W=Math.max(650,lect.length*105);
-  let H=360;
-  let M=58;
-  let TOP=86;
-
-  let xs=lect.map(function(_,i){
-
-    if(lect.length===1){
-      return W/2;
-    }
-
-    return M+i*(W-2*M)/(lect.length-1);
+  let xs = lect.map(function(_,i){
+    if(lect.length === 1) return (ML + (W-MR))/2;
+    return ML + i*((W-MR)-ML)/(lect.length-1);
   });
 
+  let dvals = dens.filter(function(x){ return x !== null; });
+  let tvals = temp.filter(function(x){ return x !== null; });
 
-  let dvals=dens.filter(function(x){
-    return x!==null;
-  });
+  let dmin = dvals.length ? Math.min.apply(null,dvals) : 0;
+  let dmax = dvals.length ? Math.max.apply(null,dvals) : 1;
+  let tmin = tvals.length ? Math.min.apply(null,tvals) : 0;
+  let tmax = tvals.length ? Math.max.apply(null,tvals) : 1;
 
-  let tvals=temp.filter(function(x){
-    return x!==null;
-  });
+  /* Escalas como Excel: densidad en saltos de 20 con margen inferior;
+     temperatura en saltos de 1 ºC con margen. */
+  let dPaso = 20;
+  let dAxisMin = Math.floor(dmin/dPaso)*dPaso - dPaso;
+  let dAxisMax = Math.ceil(dmax/dPaso)*dPaso;
+  if(dAxisMax <= dAxisMin) dAxisMax = dAxisMin + dPaso*2;
 
+  let tPaso = 1;
+  let tAxisMin = Math.floor(tmin) - 2;
+  let tAxisMax = Math.ceil(tmax) + 1;
+  if(tAxisMax <= tAxisMin) tAxisMax = tAxisMin + 2;
 
-  let dmin=dvals.length ? Math.min.apply(null,dvals) : 0;
-  let dmax=dvals.length ? Math.max.apply(null,dvals) : 1;
-
-  let tmin=tvals.length ? Math.min.apply(null,tvals) : 0;
-  let tmax=tvals.length ? Math.max.apply(null,tvals) : 1;
-
-
-  if(dmin===dmax){
-    dmin-=1;
-    dmax+=1;
+  function yD(v){
+    return TOP + (dAxisMax-v)/(dAxisMax-dAxisMin)*GRAF_H;
   }
 
-  if(tmin===tmax){
-    tmin-=1;
-    tmax+=1;
+  function yT(v){
+    return TOP + (tAxisMax-v)/(tAxisMax-tAxisMin)*GRAF_H;
   }
 
-
-  function escalaY(v,minY,maxY){
-
-    let rango=maxY-minY || 1;
-
-    return (H-M) -
-           ((v-minY)/rango) *
-           ((H-M)-TOP);
-  }
-
-
-  let dy=dens.map(function(v){
-
-    if(v===null){
-      return null;
-    }
-
-    return escalaY(v,dmin,dmax);
-  });
-
-
-  let ty=temp.map(function(v){
-
-    if(v===null){
-      return null;
-    }
-
-    return escalaY(v,tmin,tmax);
-  });
-
-
-  function path(vals,ys){
-
-    let partes=[];
-
+  function path(vals,fnY){
+    let partes = [];
     vals.forEach(function(v,i){
-
-      if(v!==null && ys[i]!==null){
-
-        partes.push(
-          (partes.length ? 'L' : 'M') +
-          xs[i].toFixed(1) +
-          ' ' +
-          ys[i].toFixed(1)
-        );
-
-      }
-
+      if(v === null) return;
+      partes.push((partes.length ? 'L' : 'M')+xs[i].toFixed(1)+' '+fnY(v).toFixed(1));
     });
-
     return partes.join(' ');
   }
 
-
-  /* ============================================
-     BUSCAR LAS ADICIONES REALES DEL PROCESO
-     ============================================ */
-
   function adicionesDelProceso(){
-
-    let dep=normalizarDep(
+    let dep = normalizarDep(
       proceso.deposito_actual ||
       (lect[0] && lect[0].deposito) ||
       ''
     );
 
-    let lote=String(
+    let lote = String(
       proceso.lote_actual ||
       (lect[0] && lect[0].lote) ||
       ''
     ).trim();
 
-    let fIni=valorFecha(
-      proceso.fecha_inicio || ''
-    );
-
-    let fFin=valorFecha(
-      proceso.fecha_fin || ''
-    );
-
+    let fIni = valorFecha(proceso.fecha_inicio || '');
+    let fFin = valorFecha(proceso.fecha_fin || '');
 
     return (ADICIONES || []).filter(function(a){
+      if(normalizarDep(a.dep || a.deposito || '') !== dep) return false;
 
-      if(
-        normalizarDep(a.dep || a.deposito || '') !== dep
-      ){
-        return false;
-      }
+      let loteAdi =
+        campo(a,['lote','Lote','lote_resultante','lote_origen']) ||
+        campoDetalle(a,['Lote_Int_Momento','Lote Int Momento']);
 
+      if(lote && loteAdi && String(loteAdi).trim() !== lote) return false;
 
-      let loteAdi=
-        campo(a,[
-          'lote',
-          'Lote',
-          'lote_resultante',
-          'lote_origen'
-        ]) ||
-
-        campoDetalle(a,[
-          'Lote_Int_Momento',
-          'Lote Int Momento'
-        ]);
-
-
-      /*
-        Si la adición tiene lote, exigimos
-        que sea el lote de esta fermentación.
-      */
-      if(
-        lote &&
-        loteAdi &&
-        String(loteAdi).trim() !== lote
-      ){
-        return false;
-      }
-
-
-      /*
-        Evita coger adiciones antiguas o futuras
-        del mismo depósito.
-      */
-      let fa=valorFecha(a.fecha || '');
-
-      if(fIni && fa && fa<fIni){
-        return false;
-      }
-
-      if(fFin && fa && fa>fFin){
-        return false;
-      }
-
+      let fa = valorFecha(a.fecha || '');
+      if(fIni && fa && fa < fIni) return false;
+      if(fFin && fa && fa > fFin) return false;
 
       return true;
-
     }).sort(function(a,b){
-
-      return valorFecha(a.fecha) -
-             valorFecha(b.fecha);
-
+      return valorFecha(a.fecha)-valorFecha(b.fecha);
     });
   }
-
-
-  /* ============================================
-     DENSIDAD A LA QUE CORRESPONDE CADA ADICIÓN
-     ============================================ */
-
-  function indiceDensidadAdicion(fecha){
-
-    let fa=valorFecha(fecha || '');
-
-    let exacto=-1;
-    let anterior=-1;
-
-
-    for(let i=0;i<lect.length;i++){
-
-      if(dens[i]===null){
-        continue;
-      }
-
-
-      let fl=valorFecha(
-        lect[i].fecha || ''
-      );
-
-
-      /*
-        Si hay varias densidades el mismo día,
-        nos quedamos con LA ÚLTIMA.
-      */
-      if(fa && fl===fa){
-        exacto=i;
-      }
-
-
-      /*
-        Si no existe densidad exactamente
-        ese día, tomamos la última anterior.
-      */
-      if(
-        fa &&
-        fl &&
-        fl<=fa
-      ){
-        anterior=i;
-      }
-
-    }
-
-
-    if(exacto>=0){
-      return exacto;
-    }
-
-    if(anterior>=0){
-      return anterior;
-    }
-
-
-    for(let i=0;i<dens.length;i++){
-
-      if(dens[i]!==null){
-        return i;
-      }
-
-    }
-
-
-    return -1;
-  }
-
-
-  /* ============================================
-     TEXTO DE LA ADICIÓN
-     ============================================ */
 
   function textoAdicion(a){
+    let tipo = campoDetalle(a,['Tipo_Aditivo','Tipo Aditivo']);
+    let producto = campoDetalle(a,['Producto']);
+    let cantidad = campoDetalle(a,['Cantidad']);
+    let unidad = campoDetalle(a,['Unidad']);
 
-    let tipo=
-      campoDetalle(a,[
-        'Tipo_Aditivo',
-        'Tipo Aditivo'
-      ]);
+    let linea1 = [tipo,producto].filter(Boolean).join(': ') || 'ADICIÓN';
+    let linea2 = [cantidad,unidad].filter(Boolean).join(' ');
 
-
-    let producto=
-      campoDetalle(a,[
-        'Producto'
-      ]);
-
-
-    let cantidad=
-      campoDetalle(a,[
-        'Cantidad'
-      ]);
-
-
-    let unidad=
-      campoDetalle(a,[
-        'Unidad'
-      ]);
-
-
-    let linea1=
-      [tipo,producto]
-      .filter(Boolean)
-      .join(': ');
-
-
-    let linea2=
-      [cantidad,unidad]
-      .filter(Boolean)
-      .join(' ');
-
-
-    return {
-      linea1: linea1 || 'ADICIÓN',
-      linea2: linea2
-    };
+    return {linea1:linea1,linea2:linea2};
   }
 
-
-  /* ============================================
-     EMPEZAR SVG
-     ============================================ */
-
-  let svg=
-    '<div class="ferm-chart">' +
-    '<svg viewBox="0 0 '+W+' '+H+'" ' +
-    'role="img" ' +
-    'aria-label="Gráfico de fermentación">';
-
-
-  svg+=
-    '<rect ' +
-    'x="0" ' +
-    'y="0" ' +
-    'width="'+W+'" ' +
-    'height="'+H+'" ' +
-    'fill="white"/>';
-
-
-  /* Líneas horizontales */
-
-  /* ============================================
-   LÍNEAS HORIZONTALES + VALORES DE LOS EJES
-   ============================================ */
-
-for(let g=0;g<=4;g++){
-
-  let y=
-    TOP +
-    g*((H-M)-TOP)/4;
-
-
-  svg+=
-    '<line ' +
-    'x1="'+M+'" ' +
-    'y1="'+y+'" ' +
-    'x2="'+(W-M)+'" ' +
-    'y2="'+y+'" ' +
-    'stroke="#e5e5e5"/>';
-
-
-  /*
-    EJE IZQUIERDO = DENSIDAD
-  */
-  if(
-    (modo==='densidad' || modo==='ambas') &&
-    hayDens
-  ){
-
-    let vd=
-      dmax -
-      g*(dmax-dmin)/4;
-
-
-    svg+=
-      '<text ' +
-      'x="'+(M-7)+'" ' +
-      'y="'+(y+4)+'" ' +
-      'text-anchor="end" ' +
-      'font-size="10" ' +
-      'font-weight="bold" ' +
-      'fill="#1f4e79">' +
-
-      Math.round(vd) +
-
-      '</text>';
-
-  }
-
-
-  /*
-    EJE DERECHO = TEMPERATURA
-  */
-  if(
-    (modo==='temperatura' || modo==='ambas') &&
-    hayTemp
-  ){
-
-    let vt=
-      tmax -
-      g*(tmax-tmin)/4;
-
-
-    svg+=
-      '<text ' +
-      'x="'+(W-M+7)+'" ' +
-      'y="'+(y+4)+'" ' +
-      'text-anchor="start" ' +
-      'font-size="10" ' +
-      'font-weight="bold" ' +
-      'fill="#c00000">' +
-
-      vt.toFixed(1).replace('.0','') +
-      '°' +
-
-      '</text>';
-
-  }
-
-}
-
-
-/* EJE VERTICAL IZQUIERDO */
-
-if(
-  (modo==='densidad' || modo==='ambas') &&
-  hayDens
-){
-
-  svg+=
-    '<line ' +
-    'x1="'+M+'" ' +
-    'y1="'+TOP+'" ' +
-    'x2="'+M+'" ' +
-    'y2="'+(H-M)+'" ' +
-    'stroke="#1f4e79"/>';
-
-}
-
-
-/* EJE VERTICAL DERECHO */
-
-if(
-  (modo==='temperatura' || modo==='ambas') &&
-  hayTemp
-){
-
-  svg+=
-    '<line ' +
-    'x1="'+(W-M)+'" ' +
-    'y1="'+TOP+'" ' +
-    'x2="'+(W-M)+'" ' +
-    'y2="'+(H-M)+'" ' +
-    'stroke="#c00000"/>';
-
-}
-
-  /* Eje inferior */
-
-  svg+=
-    '<line ' +
-    'x1="'+M+'" ' +
-    'y1="'+(H-M)+'" ' +
-    'x2="'+(W-M)+'" ' +
-    'y2="'+(H-M)+'" ' +
-    'stroke="#666"/>';
-
-
-  /* ============================================
-     DENSIDAD
-     ============================================ */
-
-  if(
-    (modo==='densidad' || modo==='ambas') &&
-    hayDens
-  ){
-
-    svg+=
-      '<path ' +
-      'd="'+path(dens,dy)+'" ' +
-      'fill="none" ' +
-      'stroke="#1f4e79" ' +
-      'stroke-width="3"/>';
-
-// valores de densidad junto a cada punto
-
-
-    dens.forEach(function(v,i){
-
-      if(v!==null){
-
-        svg+=
-          '<circle ' +
-          'cx="'+xs[i]+'" ' +
-          'cy="'+dy[i]+'" ' +
-          'r="4" ' +
-          'fill="#1f4e79">' +
-
-          '<title>Densidad '+v+'</title>' +
-
-          '</circle>';
-
-        svg+=
-          '<text ' +
-          'x="'+xs[i]+'" ' +
-          'y="'+(dy[i]-9)+'" ' +
-          'text-anchor="middle" ' +
-          'font-size="10" ' +
-          'font-weight="bold" ' +
-          'fill="#1f4e79">' +
-          esc(String(v).replace('.',',')) +
-          '</text>';
-
-      }
-
-    });
-
-
-    svg+=
-      '<text ' +
-      'x="6" ' +
-      'y="20" ' +
-      'font-size="12" ' +
-      'fill="#1f4e79">' +
-
-      'Densidad '+dmin+'–'+dmax+
-
-      '</text>';
-
-  }
-
-
-  /* ============================================
-     TEMPERATURA
-     ============================================ */
-
-  if(
-    (modo==='temperatura' || modo==='ambas') &&
-    hayTemp
-  ){
-
-    svg+=
-      '<path ' +
-      'd="'+path(temp,ty)+'" ' +
-      'fill="none" ' +
-      'stroke="#c00000" ' +
-      'stroke-width="3" ' +
-      (modo==='ambas' ? 'stroke-dasharray="7 5" ' : '') +
-      '/>';
-
-
-    temp.forEach(function(v,i){
-
-      if(v!==null){
-
-        svg+=
-          '<circle ' +
-          'cx="'+xs[i]+'" ' +
-          'cy="'+ty[i]+'" ' +
-          'r="4" ' +
-          'fill="#c00000">' +
-
-          '<title>Temperatura '+v+' °C</title>' +
-
-          '</circle>';
-
-        svg+=
-          '<text ' +
-          'x="'+xs[i]+'" ' +
-          'y="'+(ty[i]+16)+'" ' +
-          'text-anchor="middle" ' +
-          'font-size="10" ' +
-          'font-weight="bold" ' +
-          'fill="#c00000">' +
-          esc(String(v).replace('.',',')+'°') +
-          '</text>';
-
-      }
-
-    });
-
-
-    svg+=
-      '<text ' +
-      'x="'+(W-165)+'" ' +
-      'y="20" ' +
-      'font-size="12" ' +
-      'fill="#c00000">' +
-
-      'Temperatura '+
-      tmin+
-      '–'+
-      tmax+
-      ' °C' +
-
-      '</text>';
-
-  }
-
-
-  /* ============================================
-     FECHAS Y DESCUBE
-     ============================================ */
-
+  let indiceFecha = {};
   lect.forEach(function(x,i){
-
-    let f=String(
-      x.fecha || ''
-    );
-
-
-    svg+=
-      '<text ' +
-      'x="'+xs[i]+'" ' +
-      'y="'+(H-15)+'" ' +
-      'text-anchor="middle" ' +
-      'font-size="10" ' +
-      'fill="#555">' +
-
-      esc(f.substring(0,5)) +
-
-      '</text>';
-
-
-    if(x.descube_estado){
-
-      svg+=
-        '<rect ' +
-        'x="'+(xs[i]-5)+'" ' +
-        'y="'+(TOP+13)+'" ' +
-        'width="10" ' +
-        'height="10" ' +
-        'fill="#2d7dd2">' +
-
-        '<title>Descube</title>' +
-
-        '</rect>';
-
-    }
-
+    indiceFecha[String(x.fecha || '').trim()] = i;
   });
 
+  let svg = '<div class="ferm-chart"><svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Gráfico de fermentación">';
+  svg += '<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="white"/>';
 
-  /* ============================================
-     ADICIONES SOBRE LA CURVA DE DENSIDAD
-     ============================================ */
-
-  if(
-    (modo==='densidad' || modo==='ambas') &&
-    hayDens
-  ){
-
-    let apiladas={};
-
-
-    adicionesDelProceso().forEach(function(a){
-
-      let idx=
-        indiceDensidadAdicion(
-          a.fecha
-        );
-
-
-      if(
-        idx<0 ||
-        dy[idx]===null
-      ){
-        return;
-      }
-
-
-      let x=xs[idx];
-      let y=dy[idx];
-
-
-      /*
-        Si hay varias adiciones en la misma
-        densidad, las separamos.
-      */
-      let nivel=
-        apiladas[idx] || 0;
-
-      apiladas[idx]=
-        nivel+1;
-
-
-      let txt=
-        textoAdicion(a);
-
-
-      /*
-        Intentamos poner el texto encima.
-        Si no hay sitio, lo colocamos debajo.
-      */
-      let arriba=
-        y-(22+nivel*25);
-
-      let debajo=
-        y+(28+nivel*25);
-
-
-      let etiquetaY=
-        (arriba>30) ?
-        arriba :
-        debajo;
-
-
-      let lineaFin=
-        (arriba>30) ?
-        etiquetaY+5 :
-        etiquetaY-14;
-
-
-      let visible1=
-        txt.linea1.length>38 ?
-        txt.linea1.substring(0,37)+'…' :
-        txt.linea1;
-
-
-      let visible2=
-        txt.linea2;
-
-
-      /* Línea morada */
-
-      svg+=
-        '<line ' +
-        'x1="'+x+'" ' +
-        'y1="'+y+'" ' +
-        'x2="'+x+'" ' +
-        'y2="'+lineaFin+'" ' +
-        'stroke="#8a2be2" ' +
-        'stroke-width="1"/>';
-
-
-      /* Rombo morado EXACTAMENTE en la densidad */
-
-      svg+=
-        '<polygon ' +
-        'points="' +
-
-        x+','+(y-7)+' ' +
-        (x+7)+','+y+' ' +
-        x+','+(y+7)+' ' +
-        (x-7)+','+y+
-
-        '" ' +
-        'fill="#8a2be2" ' +
-        'stroke="white" ' +
-        'stroke-width="1.5">' +
-
-        '<title>' +
-
-        esc(
-          (a.fecha || '')+
-          ' · '+
-          txt.linea1+
-          (txt.linea2 ?
-            ' · '+txt.linea2 :
-            ''
-          )
-        ) +
-
-        '</title>' +
-
-        '</polygon>';
-
-
-      /* Producto / tipo */
-
-      svg+=
-        '<text ' +
-        'x="'+x+'" ' +
-        'y="'+etiquetaY+'" ' +
-        'text-anchor="middle" ' +
-        'font-size="9" ' +
-        'font-weight="bold" ' +
-        'fill="#6a1b9a">' +
-
-        esc(visible1) +
-
-        '</text>';
-
-
-      /* Cantidad */
-
-      if(visible2){
-
-        svg+=
-          '<text ' +
-          'x="'+x+'" ' +
-          'y="'+(etiquetaY+11)+'" ' +
-          'text-anchor="middle" ' +
-          'font-size="9" ' +
-          'fill="#6a1b9a">' +
-
-          esc(visible2) +
-
-          '</text>';
-
-      }
-
-    });
-
+  /* Rejilla horizontal: igual aspecto que Excel */
+  for(let g=0; g<=6; g++){
+    let y = TOP + g*GRAF_H/6;
+    svg += '<line x1="'+ML+'" y1="'+y+'" x2="'+(W-MR)+'" y2="'+y+'" stroke="#d9d9d9" stroke-width="1"/>';
   }
 
+  /* Eje de densidad (izquierda) */
+  if((modo === 'densidad' || modo === 'ambas') && hayDens){
+    svg += '<line x1="'+ML+'" y1="'+TOP+'" x2="'+ML+'" y2="'+(H-BOTTOM)+'" stroke="#666"/>';
 
-  svg+='</svg></div>';
+    for(let v=dAxisMin; v<=dAxisMax+0.001; v+=dPaso){
+      let y = yD(v);
+      svg += '<text x="'+(ML-10)+'" y="'+(y+4)+'" text-anchor="end" font-size="11" fill="#333">'+Math.round(v)+'</text>';
+    }
 
+    svg += '<text x="18" y="'+(TOP+GRAF_H/2)+'" text-anchor="middle" font-size="11" font-weight="bold" fill="#333" transform="rotate(-90 18 '+(TOP+GRAF_H/2)+')">Densidad</text>';
+  }
+
+  /* Eje de temperatura (derecha), como el gráfico combinado de Excel */
+  if((modo === 'temperatura' || modo === 'ambas') && hayTemp){
+    svg += '<line x1="'+(W-MR)+'" y1="'+TOP+'" x2="'+(W-MR)+'" y2="'+(H-BOTTOM)+'" stroke="#666"/>';
+
+    for(let v=tAxisMin; v<=tAxisMax+0.001; v+=tPaso){
+      let y = yT(v);
+      svg += '<text x="'+(W-MR+10)+'" y="'+(y+4)+'" text-anchor="start" font-size="11" fill="#333">'+String(v).replace('.',',')+'</text>';
+    }
+
+    svg += '<text x="'+(W-16)+'" y="'+(TOP+GRAF_H/2)+'" text-anchor="middle" font-size="11" font-weight="bold" fill="#333" transform="rotate(-90 '+(W-16)+' '+(TOP+GRAF_H/2)+')">Temperatura</text>';
+  }
+
+  /* Eje X */
+  svg += '<line x1="'+ML+'" y1="'+(H-BOTTOM)+'" x2="'+(W-MR)+'" y2="'+(H-BOTTOM)+'" stroke="#666"/>';
+
+  lect.forEach(function(x,i){
+    let f = String(x.fecha || '');
+    svg += '<text x="'+xs[i]+'" y="'+(H-18)+'" text-anchor="middle" font-size="11" fill="#555">'+esc(f.substring(0,5))+'</text>';
+  });
+
+  /* DENSIDAD: azul, como Excel */
+  if((modo === 'densidad' || modo === 'ambas') && hayDens){
+    svg += '<path d="'+path(dens,yD)+'" fill="none" stroke="#4472C4" stroke-width="3"/>';
+
+    dens.forEach(function(v,i){
+      if(v === null) return;
+      let x = xs[i], y = yD(v);
+      svg += '<polygon points="'+x+','+(y-5)+' '+(x+5)+','+y+' '+x+','+(y+5)+' '+(x-5)+','+y+'" fill="#4472C4"><title>Densidad '+v+'</title></polygon>';
+    });
+  }
+
+  /* TEMPERATURA: roja continua con cuadrados, como Excel */
+  if((modo === 'temperatura' || modo === 'ambas') && hayTemp){
+    svg += '<path d="'+path(temp,yT)+'" fill="none" stroke="#C8463A" stroke-width="3"/>';
+
+    temp.forEach(function(v,i){
+      if(v === null) return;
+      let x = xs[i], y = yT(v);
+      svg += '<rect x="'+(x-4)+'" y="'+(y-4)+'" width="8" height="8" fill="#C8463A"><title>Temperatura '+String(v).replace('.',',')+' °C</title></rect>';
+    });
+  }
+
+  /* ADICIONES: sobre la densidad del mismo día, como en Excel */
+  if((modo === 'densidad' || modo === 'ambas') && hayDens){
+    let apiladas = {};
+
+    adicionesDelProceso().forEach(function(a){
+      let fecha = String(a.fecha || '').trim();
+      let idx = Object.prototype.hasOwnProperty.call(indiceFecha,fecha) ? indiceFecha[fecha] : -1;
+      if(idx < 0 || dens[idx] === null) return;
+
+      let x = xs[idx];
+      let y = yD(dens[idx]);
+      let nivel = apiladas[idx] || 0;
+      apiladas[idx] = nivel + 1;
+
+      let txt = textoAdicion(a);
+      let labelY = y - 18 - nivel*23;
+
+      /* Si falta espacio arriba, coloca la etiqueta debajo */
+      if(labelY < 25) labelY = y + 25 + nivel*23;
+
+      svg += '<polygon points="'+x+','+(y-6)+' '+(x+6)+','+y+' '+x+','+(y+6)+' '+(x-6)+','+y+'" fill="#C0504D"><title>'+esc((a.fecha || '')+' · '+txt.linea1+(txt.linea2?' · '+txt.linea2:''))+'</title></polygon>';
+      svg += '<text x="'+x+'" y="'+labelY+'" text-anchor="middle" font-size="9" fill="#222">'+esc(txt.linea1)+'</text>';
+
+      if(txt.linea2){
+        svg += '<text x="'+x+'" y="'+(labelY+11)+'" text-anchor="middle" font-size="9" fill="#222">'+esc(txt.linea2)+'</text>';
+      }
+    });
+  }
+
+  svg += '</svg></div>';
   return svg;
 }
-
 function eventosFermentacion(proceso){
   let eventos=[];
   lecturasProceso(proceso.id).forEach(function(x){
