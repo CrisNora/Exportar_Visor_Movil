@@ -568,7 +568,180 @@ function renderTabs(){
     t.appendChild(b);
   });
 }
+function numeroLitrosFerm(v){
 
+  let s=String(
+    v===undefined || v===null ? '' : v
+  ).trim().replace(/\s/g,'');
+
+  if(!s) return null;
+
+  /*
+    35,000  -> 35000
+    18.000  -> 18000
+    4100    -> 4100
+    18,5    -> 18.5
+  */
+  if(/^[-+]?\d{1,3}([.,]\d{3})+$/.test(s)){
+    return Number(s.replace(/[.,]/g,''));
+  }
+
+  if(s.indexOf('.')>=0 && s.indexOf(',')>=0){
+    s=s.replace(/\./g,'').replace(',','.');
+  }
+  else if(s.indexOf(',')>=0){
+
+    let p=s.split(',');
+
+    if(p.length===2 && p[1].length===3){
+      s=p.join('');
+    }else{
+      s=s.replace(',','.');
+    }
+
+  }
+
+  let n=Number(s);
+
+  return isNaN(n) ? null : n;
+}
+
+
+function volumenActualFermentacion(dep,lote,volumenOriginal){
+
+  let p=procesoPorDeposito(dep,lote);
+
+  if(
+    !p ||
+    normalizarTexto(p.estado || '')!=='ACTIVO'
+  ){
+    return Number(volumenOriginal || 0);
+  }
+
+
+  let total=0;
+  let encontrados=0;
+
+
+  (MOVIMIENTOS || []).forEach(function(m){
+
+    let proc=
+      campo(m,[
+        'Proceso_Ferm_ID',
+        'proceso_ferm_id'
+      ]) ||
+      campoDetalle(m,[
+        'Proceso_Ferm_ID'
+      ]);
+
+
+    if(
+      String(proc || '') !==
+      String(p.id || '')
+    ){
+      return;
+    }
+
+
+    let tipo=
+      normalizarTexto(
+        campo(m,[
+          'Tipo_Evento',
+          'tipo_evento',
+          'evento'
+        ]) ||
+        campoDetalle(m,[
+          'Tipo_Evento'
+        ])
+      );
+
+
+    if(
+      tipo!=='ENTRADA_ORIGEN' &&
+      tipo!=='APORTE_FERMENTACION'
+    ){
+      return;
+    }
+
+
+    /*
+      IMPORTANTE:
+      primero buscamos en detalle porque actualmente
+      el campo "litros" de estos movimientos está
+      llegando a 0.
+    */
+    let volumen=
+      campoDetalle(m,[
+        'Volumen_L (+/-)',
+        'Volumen_L'
+      ]) ||
+      campo(m,[
+        'Volumen_L',
+        'volumen_l'
+      ]);
+
+
+    let n=numeroLitrosFerm(volumen);
+
+
+    if(n!==null){
+
+      total+=n;
+      encontrados++;
+
+    }
+
+  });
+
+
+  return encontrados>0 ?
+         total :
+         Number(volumenOriginal || 0);
+}
+
+
+function actualizarVolumenesFermentacion(){
+
+  Object.keys(DEPOSITOS || {}).forEach(function(dep){
+
+    let d=DEPOSITOS[dep];
+
+    if(!d) return;
+
+
+    d.volumen=
+      volumenActualFermentacion(
+        dep,
+        d.lote || '',
+        d.volumen
+      );
+
+  });
+
+
+  /*
+    Actualizamos también el volumen mostrado
+    en RESUMEN DE ANALÍTICAS.
+  */
+  if(
+    RESUMEN_ANALITICAS &&
+    Array.isArray(RESUMEN_ANALITICAS.filas)
+  ){
+
+    RESUMEN_ANALITICAS.filas.forEach(function(f){
+
+      let d=
+        DEPOSITOS[f.deposito];
+
+      if(d){
+        f.volumen=d.volumen;
+      }
+
+    });
+
+  }
+
+}
 function render(){
   renderTabs();
 
@@ -1703,23 +1876,121 @@ function svgGraficoFermentacion(proceso,modo){
 
   /* Líneas horizontales */
 
-  for(let g=0;g<=4;g++){
+  /* ============================================
+   LÍNEAS HORIZONTALES + VALORES DE LOS EJES
+   ============================================ */
 
-    let y=
-      TOP +
-      g*((H-M)-TOP)/4;
+for(let g=0;g<=4;g++){
+
+  let y=
+    TOP +
+    g*((H-M)-TOP)/4;
+
+
+  svg+=
+    '<line ' +
+    'x1="'+M+'" ' +
+    'y1="'+y+'" ' +
+    'x2="'+(W-M)+'" ' +
+    'y2="'+y+'" ' +
+    'stroke="#e5e5e5"/>';
+
+
+  /*
+    EJE IZQUIERDO = DENSIDAD
+  */
+  if(
+    (modo==='densidad' || modo==='ambas') &&
+    hayDens
+  ){
+
+    let vd=
+      dmax -
+      g*(dmax-dmin)/4;
 
 
     svg+=
-      '<line ' +
-      'x1="'+M+'" ' +
-      'y1="'+y+'" ' +
-      'x2="'+(W-M)+'" ' +
-      'y2="'+y+'" ' +
-      'stroke="#e5e5e5"/>';
+      '<text ' +
+      'x="'+(M-7)+'" ' +
+      'y="'+(y+4)+'" ' +
+      'text-anchor="end" ' +
+      'font-size="10" ' +
+      'font-weight="bold" ' +
+      'fill="#1f4e79">' +
+
+      Math.round(vd) +
+
+      '</text>';
 
   }
 
+
+  /*
+    EJE DERECHO = TEMPERATURA
+  */
+  if(
+    (modo==='temperatura' || modo==='ambas') &&
+    hayTemp
+  ){
+
+    let vt=
+      tmax -
+      g*(tmax-tmin)/4;
+
+
+    svg+=
+      '<text ' +
+      'x="'+(W-M+7)+'" ' +
+      'y="'+(y+4)+'" ' +
+      'text-anchor="start" ' +
+      'font-size="10" ' +
+      'font-weight="bold" ' +
+      'fill="#c00000">' +
+
+      vt.toFixed(1).replace('.0','') +
+      '°' +
+
+      '</text>';
+
+  }
+
+}
+
+
+/* EJE VERTICAL IZQUIERDO */
+
+if(
+  (modo==='densidad' || modo==='ambas') &&
+  hayDens
+){
+
+  svg+=
+    '<line ' +
+    'x1="'+M+'" ' +
+    'y1="'+TOP+'" ' +
+    'x2="'+M+'" ' +
+    'y2="'+(H-M)+'" ' +
+    'stroke="#1f4e79"/>';
+
+}
+
+
+/* EJE VERTICAL DERECHO */
+
+if(
+  (modo==='temperatura' || modo==='ambas') &&
+  hayTemp
+){
+
+  svg+=
+    '<line ' +
+    'x1="'+(W-M)+'" ' +
+    'y1="'+TOP+'" ' +
+    'x2="'+(W-M)+'" ' +
+    'y2="'+(H-M)+'" ' +
+    'stroke="#c00000"/>';
+
+}
 
   /* Eje inferior */
 
@@ -1741,12 +2012,14 @@ function svgGraficoFermentacion(proceso,modo){
     hayDens
   ){
 
-    svg+=
-      '<path ' +
-      'd="'+path(dens,dy)+'" ' +
-      'fill="none" ' +
-      'stroke="#1f4e79" ' +
-      'stroke-width="3"/>';
+   svg+=
+  '<path ' +
+  'd="'+path(temp,ty)+'" ' +
+  'fill="none" ' +
+  'stroke="#c00000" ' +
+  'stroke-width="3" ' +
+  (modo==='ambas' ? 'stroke-dasharray="7 5" ' : '') +
+  '/>';
 
 
     dens.forEach(function(v,i){
@@ -2182,9 +2455,11 @@ fetch('datos.json?nocache=' + Date.now())
   LIMPIEZAS_DEPOSITOS = data.limpiezas_depositos || [];
   RESUMEN_ANALITICAS = data.resumen_analiticas || {columnas:[], filas:[]};
   FERMENTACIONES = data.fermentaciones || {procesos:[], diario:[]};
-  COLORES_TIPO_VINO = data.colores_tipo_vino || {};
+COLORES_TIPO_VINO = data.colores_tipo_vino || {};
 
-  render();
+actualizarVolumenesFermentacion();
+
+render();
   renderResumenAnaliticas();
   document.getElementById('info').innerHTML = 'Pulsa un depósito.';
 })
