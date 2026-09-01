@@ -75,7 +75,6 @@ h1{font-size:18px;margin:0}.sub{font-size:12px;margin-top:4px}
 .ferm-evento{border-left:4px solid #8a2be2;background:#faf7ff;border-radius:6px;padding:7px;margin-top:6px;font-size:13px;line-height:1.35}
 .ferm-evento.descube{border-left-color:#2d7dd2;background:#f4f9ff}
 .ferm-sin{padding:12px;color:#666}
-
 </style>
 </head>
 <body>
@@ -123,19 +122,17 @@ let LIMPIEZAS_DEPOSITOS = [];
 let RESUMEN_ANALITICAS = {columnas:[], filas:[]};
 let FERMENTACIONES = {procesos:[], diario:[]};
 let COLORES_TIPO_VINO = {};
+let ANADAS_DEPOSITOS = {};
 let MODO_GRAFICO_FERM = {};
 let mapaActual = 0;
 let vistaActual = 'plano';
 
-
 function mostrarVista(vista){
   vistaActual = vista === 'resumen' ? 'resumen' : 'plano';
-
   document.getElementById('vistaPlano').classList.toggle('active', vistaActual === 'plano');
   document.getElementById('vistaResumen').classList.toggle('active', vistaActual === 'resumen');
   document.getElementById('btnPlano').classList.toggle('active', vistaActual === 'plano');
   document.getElementById('btnResumen').classList.toggle('active', vistaActual === 'resumen');
-
   if(vistaActual === 'resumen'){
     renderResumenAnaliticas();
   }
@@ -143,19 +140,9 @@ function mostrarVista(vista){
 
 function estiloCeldaAnalitica(celda){
   let estilos = [];
-
-  if(celda && celda.fondo){
-    estilos.push('background:'+String(celda.fondo));
-  }
-
-  if(celda && celda.color_texto){
-    estilos.push('color:'+String(celda.color_texto));
-  }
-
-  if(celda && celda.negrita){
-    estilos.push('font-weight:bold');
-  }
-
+  if(celda && celda.fondo) estilos.push('background:'+String(celda.fondo));
+  if(celda && celda.color_texto) estilos.push('color:'+String(celda.color_texto));
+  if(celda && celda.negrita) estilos.push('font-weight:bold');
   return estilos.join(';');
 }
 
@@ -164,90 +151,453 @@ const ORDEN_FISICO_DEPOSITOS = {M:0,A:1,F:2,I:3,T:4,B:5,E:6};
 function partesDepositoResumen(dep){
   let t = normalizarTexto(dep || '').replace(/\s+/g,'');
   let m = t.match(/^([A-Z]+)(\d+)?/);
-  return {
-    grupo: m ? m[1] : t,
-    numero: m && m[2] ? Number(m[2]) : 999999,
-    texto: t
-  };
+  return {grupo:m?m[1]:t,numero:m&&m[2]?Number(m[2]):999999,texto:t};
 }
 
 function compararDepositosResumen(depA,depB){
-  let a = partesDepositoResumen(depA);
-  let b = partesDepositoResumen(depB);
-  let oa = Object.prototype.hasOwnProperty.call(ORDEN_FISICO_DEPOSITOS,a.grupo) ? ORDEN_FISICO_DEPOSITOS[a.grupo] : 99;
-  let ob = Object.prototype.hasOwnProperty.call(ORDEN_FISICO_DEPOSITOS,b.grupo) ? ORDEN_FISICO_DEPOSITOS[b.grupo] : 99;
-  if(oa !== ob) return oa-ob;
-  if(a.grupo !== b.grupo) return a.grupo.localeCompare(b.grupo,'es');
-  if(a.numero !== b.numero) return a.numero-b.numero;
+  let a=partesDepositoResumen(depA), b=partesDepositoResumen(depB);
+  let oa=Object.prototype.hasOwnProperty.call(ORDEN_FISICO_DEPOSITOS,a.grupo)?ORDEN_FISICO_DEPOSITOS[a.grupo]:99;
+  let ob=Object.prototype.hasOwnProperty.call(ORDEN_FISICO_DEPOSITOS,b.grupo)?ORDEN_FISICO_DEPOSITOS[b.grupo]:99;
+  if(oa!==ob) return oa-ob;
+  if(a.grupo!==b.grupo) return a.grupo.localeCompare(b.grupo,'es');
+  if(a.numero!==b.numero) return a.numero-b.numero;
   return a.texto.localeCompare(b.texto,'es',{numeric:true});
 }
 
-function lecturasFermentacionDeposito(dep,lote){
-  let p=procesoPorDeposito(dep,lote);
-
-  if(p && p.id){
-    return lecturasProceso(p.id);
-  }
-
-  return ((FERMENTACIONES && FERMENTACIONES.diario) || [])
-    .filter(function(x){
-      if(normalizarDep(x.deposito)!==normalizarDep(dep)) return false;
-      if(lote && x.lote && String(x.lote)!==String(lote)) return false;
-      return true;
-    })
-    .sort(function(a,b){
-      let fa=valorFecha(a.fecha);
-      let fb=valorFecha(b.fecha);
-      if(fa!==fb) return fa-fb;
-      return 0;
-    });
+function normalizarTexto(x){
+  let t=String(x||'').toUpperCase();
+  return t.replace(/Á/g,'A').replace(/É/g,'E').replace(/Í/g,'I').replace(/Ó/g,'O').replace(/Ú/g,'U').replace(/Ü/g,'U');
 }
 
-function camposLecturaFermentacion(x){
-  let defs=[
-    ['DENSIDAD',['densidad']],
-    ['TEMP.',['temperatura']],
-    ['pH',['ph','pH']],
-    ['AT',['at','acidez_total']],
-    ['GRADO BÉ',['grado_be','grado_beaume']],
-    ['SO2 LIBRE',['so2_libre']],
-    ['SO2 TOTAL',['so2_total']],
-    ['TEST PROTEÍNA',['test_proteina']],
-    ['ÁC. MÁLICO',['ac_malico','acido_malico']],
-    ['ÁC. LÁCTICO',['ac_lactico','acido_lactico']]
-  ];
+function normalizarDep(x){
+  let t=String(x||'').trim().toUpperCase();
+  t=t.replace(/^ACTUAL\s*:\s*/i,'');
+  t=t.replace(/^ORIGEN\s*:\s*/i,'');
+  t=t.replace(/^DESTINO\s*:\s*/i,'');
+  t=t.replace(/^DEP[ÓO]SITO\s*:\s*/i,'');
+  t=t.replace(/^DEPOSITO\s*:\s*/i,'');
+  return t.trim();
+}
 
+function normalizarClaveTipo(x){
+  return normalizarTexto(String(x||'').replace(/\u00a0/g,' ')).trim().replace(/\s+/g,' ');
+}
+
+function fmt(n){return Math.round(Number(n||0)).toLocaleString('es-ES');}
+
+function colorLogicoDep(d){
+  if(!d||Number(d.volumen||0)<=0) return 'VACIO';
+  let clave=normalizarClaveTipo(d.tipo||'');
+  let desdeTabla=clave&&Object.prototype.hasOwnProperty.call(COLORES_TIPO_VINO,clave)?COLORES_TIPO_VINO[clave]:'';
+  let color=normalizarTexto(desdeTabla||d.color||'').trim();
+  if(color==='TINTO'||color==='BLANCO'||color==='ROSADO') return color;
+  return 'SIN CLASIFICAR';
+}
+
+function colorDep(d){
+  let color=colorLogicoDep(d);
+  if(color==='VACIO') return '#f5f5f5';
+  if(color==='TINTO') return '#dc0000';
+  if(color==='BLANCO') return '#ffe650';
+  if(color==='ROSADO') return '#f4aac8';
+  return '#aaa';
+}
+
+function colorHigiene(h){
+  let t=normalizarTexto((h&&(h.texto||h.estado))||'');
+  if(t.includes('SOSA')) return '#7030a0';
+  if(t.includes('SOLO TINTO')) return '#78481e';
+  if(t.includes('DESINF')) return '#1f4e79';
+  if(t.includes('REVISAR')) return '#808080';
+  if(t.includes('APTO')) return '#000000';
+  return '#000000';
+}
+
+function textoHigiene(h){
+  if(!h) return '';
+  if(h.texto) return String(h.texto);
+  let e=normalizarTexto(h.estado||'');
+  if(e.includes('SOSA')) return 'SOSA';
+  if(e.includes('SOLO TINTO')) return 'SOLO TINTO';
+  if(e.includes('DESINF')) return 'DESINF.';
+  if(e.includes('REVISAR')) return 'REVISAR';
+  if(e.includes('APTO')) return 'APTO';
+  return '';
+}
+
+function higieneDep(dep,d){
+  let buscado=String(dep||'').toUpperCase();
+  if(HIGIENE_DEPOSITOS[dep]) return HIGIENE_DEPOSITOS[dep];
+  if(HIGIENE_DEPOSITOS[buscado]) return HIGIENE_DEPOSITOS[buscado];
+  for(let k in HIGIENE_DEPOSITOS){
+    if(Object.prototype.hasOwnProperty.call(HIGIENE_DEPOSITOS,k) &&
+       String(k||'').toUpperCase()===buscado) return HIGIENE_DEPOSITOS[k];
+  }
+  if(d&&d.higiene) return d.higiene;
+  return null;
+}
+
+function textColor(d,h){
+  if(d&&colorLogicoDep(d)==='TINTO'&&Number(d.volumen||0)>0) return 'white';
+  if(Number((d&&d.volumen)||0)<=0&&h) return colorHigiene(h);
+  return 'black';
+}
+
+function esc(x){
+  return String(x||'').replace(/[&<>]/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];
+  });
+}
+
+function escAttr(x){
+  return String(x===undefined||x===null?'':x)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function detalleBonito(t){return esc(t).replace(/\s*\|\s*/g,'<br>').replace(/=/g,': ');}
+function bloque(titulo,contenido){return '<details class="box"><summary>'+titulo+'</summary>'+contenido+'</details>';}
+
+function valorFecha(f){
+  let s=String(f||'').trim();
+  if(!s) return 0;
+  let m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if(m) return new Date(Number(m[3]),Number(m[2])-1,Number(m[1])).getTime();
+  m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if(m) return new Date(Number(m[1]),Number(m[2])-1,Number(m[3])).getTime();
+  let t=Date.parse(s);
+  return isNaN(t)?0:t;
+}
+
+function numeroOrdenRegistro(x,indiceOriginal){
+  if(!x) return indiceOriginal||0;
+  let posibles=[x.orden_sistema,x.Orden_Sistema,x.ORDEN_SISTEMA,x.orden,x.Orden,x.id,x.ID,x.Id];
+  for(let i=0;i<posibles.length;i++){
+    let v=posibles[i];
+    if(v!==undefined&&v!==null&&String(v).trim()!==''){
+      let n=Number(String(v).replace(/\./g,'').replace(',','.'));
+      if(!isNaN(n)) return n;
+    }
+  }
+  let detalle=String(x.detalle||'');
+  let m=detalle.match(/Orden[_\s]*Sistema\s*[:=]\s*([0-9.,]+)/i);
+  if(m&&m[1]){
+    let n=Number(String(m[1]).replace(/\./g,'').replace(',','.'));
+    if(!isNaN(n)) return n;
+  }
+  return indiceOriginal||0;
+}
+
+function ordenarFechaDesc(lista){
+  return (lista||[]).map(function(x,i){return {item:x,indice:i};})
+    .sort(function(a,b){
+      let fa=valorFecha(a.item.fecha),fb=valorFecha(b.item.fecha);
+      if(fb!==fa) return fb-fa;
+      let oa=numeroOrdenRegistro(a.item,a.indice),ob=numeroOrdenRegistro(b.item,b.indice);
+      if(ob!==oa) return ob-oa;
+      return b.indice-a.indice;
+    }).map(function(x){return x.item;});
+}
+
+function pintarLista(lista,clase){
+  let salida=ordenarFechaDesc(lista);
+  if(!salida||salida.length===0) return '<div class="vacio">Sin datos</div>';
+  return salida.map(function(x){
+    let f=x.fecha?'<b>'+esc(x.fecha)+'</b><br>':'';
+    return '<div class="item '+clase+'">'+f+detalleBonito(x.detalle||'')+'</div>';
+  }).join('');
+}
+
+function campo(x,nombres){
+  if(!x) return '';
+  for(let i=0;i<nombres.length;i++){
+    let n=nombres[i];
+    if(x[n]!==undefined&&x[n]!==null&&String(x[n]).trim()!=='') return String(x[n]).trim();
+  }
+  let buscados=nombres.map(function(n){return normalizarTexto(n).replace(/_/g,'');});
+  for(let k in x){
+    if(Object.prototype.hasOwnProperty.call(x,k)){
+      let nk=normalizarTexto(k).replace(/_/g,'');
+      if(buscados.includes(nk)&&x[k]!==undefined&&x[k]!==null&&String(x[k]).trim()!=='') return String(x[k]).trim();
+    }
+  }
+  return '';
+}
+
+function campoDetalle(x,nombres){
+  let detalle=String((x&&x.detalle)||'');
+  if(!detalle) return '';
+  for(let i=0;i<nombres.length;i++){
+    let n=nombres[i];
+    let patrones=[n,n.replace(/_/g,' '),n.replace(/ /g,'_')];
+    for(let j=0;j<patrones.length;j++){
+      let p=patrones[j].replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+      let re=new RegExp(p+'\\s*[:=]\\s*([^|\\n\\r]+)','i');
+      let m=detalle.match(re);
+      if(m&&m[1]) return String(m[1]).trim();
+    }
+  }
+  return '';
+}
+
+function loteOrigenMovimiento(x,loteActual){
+  let directo=campo(x,['lote_origen_momento','Lote_Origen_Momento','lote_origen','Lote_Origen','lote_anterior','Lote_Anterior']);
+  if(directo) return directo;
+  let desdeDetalle=campoDetalle(x,['Lote_Origen_Momento','Lote Origen Momento','Lote_Origen','Lote Origen','Lote_Anterior','Lote Anterior']);
+  if(desdeDetalle) return desdeDetalle;
+  let lote=campo(x,['lote','Lote']);
+  if(lote&&lote!==loteActual) return lote;
+  return loteActual;
+}
+
+function mostrarVista(vista){
+  vistaActual=vista==='resumen'?'resumen':'plano';
+  document.getElementById('vistaPlano').classList.toggle('active',vistaActual==='plano');
+  document.getElementById('vistaResumen').classList.toggle('active',vistaActual==='resumen');
+  document.getElementById('btnPlano').classList.toggle('active',vistaActual==='plano');
+  document.getElementById('btnResumen').classList.toggle('active',vistaActual==='resumen');
+  if(vistaActual==='resumen') renderResumenAnaliticas();
+}
+
+function renderTabs(){
+  let t=document.getElementById('tabs');
+  t.innerHTML='';
+  MAPAS.forEach(function(m,i){
+    let b=document.createElement('button');
+    b.textContent=m.nombre;
+    b.className=i===mapaActual?'active':'';
+    b.onclick=function(){mapaActual=i;render();};
+    t.appendChild(b);
+  });
+}
+
+/* =========================================================
+   RESUMEN ANALÍTICO CORREGIDO
+   ========================================================= */
+
+function claseAnadaResumen(dep){
+  dep=normalizarDep(dep||'');
+  let c='';
+  if(ANADAS_DEPOSITOS&&Object.prototype.hasOwnProperty.call(ANADAS_DEPOSITOS,dep)){
+    c=ANADAS_DEPOSITOS[dep];
+  }
+  c=normalizarTexto(c||'').trim();
+  if(c==='AÑADA_ACTUAL') c='ANADA_ACTUAL';
+  return c;
+}
+
+function colorAnadaResumen(dep){
+  switch(claseAnadaResumen(dep)){
+    case 'ANADA_ACTUAL': return '#C6EFCE';
+    case 'ANTERIOR': return '#FFF2CC';
+    case 'MIXTA': return '#F8CBAD';
+    case 'REVISAR': return '#FFC7CE';
+    case 'VACIO': return '#F2F2F2';
+    default: return '';
+  }
+}
+
+function textoAnadaResumen(dep){
+  switch(claseAnadaResumen(dep)){
+    case 'ANADA_ACTUAL': return 'AÑADA ACTUAL';
+    case 'ANTERIOR': return 'AÑADA ANTERIOR';
+    case 'MIXTA': return 'MEZCLA DE AÑADAS';
+    case 'REVISAR': return 'REVISAR AÑADA';
+    default: return '';
+  }
+}
+
+function filasResumenConFermentacion(){
+  let origen=(RESUMEN_ANALITICAS&&Array.isArray(RESUMEN_ANALITICAS.filas))
+    ? RESUMEN_ANALITICAS.filas : [];
   let salida=[];
 
-  defs.forEach(function(d){
-    let valor=campo(x,d[1]);
+  Object.keys(DEPOSITOS||{}).forEach(function(claveDep){
+    let dep=normalizarDep(claveDep);
+    let d=DEPOSITOS[claveDep]||DEPOSITOS[dep];
+    if(!dep||!d) return;
 
-    if(valor!==undefined && valor!==null && String(valor).trim()!==''){
-      if(d[0]==='TEMP.'){
-        valor=String(valor).replace('.',',')+' °C';
-      }
-      salida.push({campo:d[0],valor:String(valor)});
-    }
+    /* El recuento actual es la autoridad */
+    if(Number(d.volumen||0)<=0) return;
+
+    let loteActual=String(d.lote||'').trim();
+
+    let candidatos=origen.filter(function(f){
+      return normalizarDep(f.deposito||'')===dep &&
+             String(f.lote||'').trim()===loteActual;
+    });
+
+    candidatos=candidatos.slice().sort(function(a,b){
+      return valorFecha(b.fecha||'')-valorFecha(a.fecha||'');
+    });
+
+    let mejor=candidatos[0]||{};
+
+    salida.push({
+      fecha:mejor.fecha||d.fecha||'',
+      deposito:dep,
+      tipo:d.tipo||mejor.tipo||'',
+      volumen:Number(d.volumen||0),
+      lote:loteActual,
+      alerta:!!mejor.alerta,
+      celdas:Array.isArray(mejor.celdas)?mejor.celdas:[],
+      clase_anada:claseAnadaResumen(dep)
+    });
   });
 
   return salida;
 }
 
-function analiticasFermentacionParaDeposito(dep,lote){
-  return lecturasFermentacionDeposito(dep,lote).map(function(x){
-    let partes=camposLecturaFermentacion(x).map(function(c){
-      return c.campo+'='+c.valor;
+function renderResumenAnaliticas(){
+  let contenedor=document.getElementById('listaResumen');
+  let contador=document.getElementById('contadorResumen');
+  if(!contenedor||!contador) return;
+
+  let filas=filasResumenConFermentacion();
+  let filtro=normalizarTexto((document.getElementById('filtroResumen')||{}).value||'');
+
+  if(filtro){
+    filas=filas.filter(function(f){
+      let texto=[f.deposito,f.lote,f.tipo,f.fecha,textoAnadaResumen(f.deposito)]
+        .concat((f.celdas||[]).map(function(c){return (c.campo||'')+' '+(c.valor||'');}))
+        .join(' ');
+
+      let lect=lecturasFermentacionDeposito(f.deposito,f.lote);
+      texto+=' '+lect.map(function(x){
+        return camposLecturaFermentacion(x).map(function(c){return c.campo+' '+c.valor;}).join(' ');
+      }).join(' ');
+
+      return normalizarTexto(texto).includes(filtro);
+    });
+  }
+
+  filas.sort(function(a,b){return compararDepositosResumen(a.deposito,b.deposito);});
+
+  contador.textContent=filas.length+(filas.length===1?' depósito':' depósitos')+
+    ((RESUMEN_ANALITICAS&&RESUMEN_ANALITICAS.generado)?' | Actualizado: '+RESUMEN_ANALITICAS.generado:'');
+
+  if(filas.length===0){
+    contenedor.innerHTML='<div class="sin-resumen">No hay depósitos ocupados que coincidan con el filtro.</div>';
+    return;
+  }
+
+  contenedor.innerHTML=filas.map(function(f){
+    let celdas=(f.celdas||[]).filter(function(c){
+      let campoNormal=normalizarTexto(c.campo||'').replace(/[_\s]/g,'');
+      let tieneValor=String(c.valor===undefined||c.valor===null?'':c.valor).trim()!=='';
+      let esCampoInterno=campoNormal==='ORDENSISTEMA'||campoNormal==='OBSERVACIONES';
+      return tieneValor&&!esCampoInterno;
     });
 
-    if(x.observaciones){
-      partes.push('Observaciones='+x.observaciones);
-    }
+    let detalleAnalitica=celdas.length>0
+      ? '<div class="ana-grid">'+celdas.map(function(c){
+          return '<div class="ana-celda" style="'+esc(estiloCeldaAnalitica(c))+'">'+
+            '<span class="ana-campo">'+esc(c.campo||'-')+'</span>'+
+            '<span class="ana-valor">'+esc(c.valor||'-')+'</span></div>';
+        }).join('')+'</div>'
+      : '<div class="vacio">Sin analítica convencional para el lote actual: <b>'+esc(f.lote||'-')+'</b>.</div>';
 
+    let seguimiento=seguimientoFermentacionHTML(f.deposito,f.lote);
+    let colorAnada=colorAnadaResumen(f.deposito);
+    let textoAnada=textoAnadaResumen(f.deposito);
+    let estiloFila=colorAnada?'border-left:8px solid '+colorAnada+';':'';
+    let estiloSummary=colorAnada?'background:'+colorAnada+';':'';
+
+    return '<details class="ana-row'+(f.alerta?' alerta':'')+'" style="'+estiloFila+'">'+
+      '<summary style="'+estiloSummary+'">'+
+        '<span class="ana-resumen-linea">'+esc(f.deposito||'-')+' | '+esc(f.tipo||'-')+' | '+fmt(f.volumen)+' L</span>'+
+        '<span class="ana-resumen-meta">Fecha usada: '+esc(f.fecha||'-')+
+          (textoAnada?' | '+esc(textoAnada):'')+(f.alerta?' | AVISO DEL EXCEL':'')+
+        '</span>'+
+      '</summary>'+
+      '<div class="ana-detalle">'+
+        '<div class="ana-lote"><b>Lote actual:</b> '+esc(f.lote||'-')+'</div>'+
+        detalleAnalitica+seguimiento+
+      '</div>'+
+    '</details>';
+  }).join('');
+}
+
+/* =========================================================
+   FERMENTACIÓN: funciones existentes del visor
+   ========================================================= */
+
+function procesoPorDeposito(dep,lote){
+  if(!String(lote||'').trim()) return null;
+
+  let procesos=(FERMENTACIONES&&Array.isArray(FERMENTACIONES.procesos))?FERMENTACIONES.procesos:[];
+  let exactos=procesos.filter(function(p){
+    return normalizarDep(p.deposito_actual)===normalizarDep(dep) &&
+           String(p.lote_actual||'')===String(lote);
+  });
+
+  exactos.sort(function(a,b){
+    let ea=normalizarTexto(a.estado)==='ACTIVO'?1:0;
+    let eb=normalizarTexto(b.estado)==='ACTIVO'?1:0;
+    if(eb!==ea) return eb-ea;
+    return valorFecha(b.fecha_inicio)-valorFecha(a.fecha_inicio);
+  });
+
+  if(exactos[0]) return exactos[0];
+
+  let diario=(FERMENTACIONES&&Array.isArray(FERMENTACIONES.diario))?FERMENTACIONES.diario:[];
+  let lect=diario.filter(function(x){
+    return normalizarDep(x.deposito)===normalizarDep(dep) &&
+           String(x.lote||'')===String(lote);
+  }).sort(function(a,b){return valorFecha(b.fecha)-valorFecha(a.fecha);})[0];
+
+  if(!lect) return null;
+
+  return procesos.filter(function(p){
+    return String(p.id)===String(lect.proceso_id);
+  })[0] || {id:lect.proceso_id,deposito_actual:dep,lote_actual:lote};
+}
+
+function lecturasProceso(id){
+  return ((FERMENTACIONES&&FERMENTACIONES.diario)||[])
+    .filter(function(x){return String(x.proceso_id||'')===String(id||'');})
+    .sort(function(a,b){return valorFecha(a.fecha)-valorFecha(b.fecha);});
+}
+
+function lecturasFermentacionDeposito(dep,lote){
+  if(!String(lote||'').trim()) return [];
+  let p=procesoPorDeposito(dep,lote);
+  if(p&&p.id) return lecturasProceso(p.id);
+
+  return ((FERMENTACIONES&&FERMENTACIONES.diario)||[])
+    .filter(function(x){
+      return normalizarDep(x.deposito)===normalizarDep(dep) &&
+             String(x.lote||'')===String(lote);
+    })
+    .sort(function(a,b){return valorFecha(a.fecha)-valorFecha(b.fecha);});
+}
+
+function camposLecturaFermentacion(x){
+  let defs=[
+    ['DENSIDAD',['densidad']],['TEMP.',['temperatura']],['pH',['ph','pH']],
+    ['AT',['at','acidez_total']],['GRADO BÉ',['grado_be','grado_beaume']],
+    ['SO2 LIBRE',['so2_libre']],['SO2 TOTAL',['so2_total']],
+    ['TEST PROTEÍNA',['test_proteina']],['ÁC. MÁLICO',['ac_malico','acido_malico']],
+    ['ÁC. LÁCTICO',['ac_lactico','acido_lactico']]
+  ];
+  let salida=[];
+  defs.forEach(function(d){
+    let valor=campo(x,d[1]);
+    if(valor!==undefined&&valor!==null&&String(valor).trim()!==''){
+      if(d[0]==='TEMP.') valor=String(valor).replace('.',',')+' °C';
+      salida.push({campo:d[0],valor:String(valor)});
+    }
+  });
+  return salida;
+}
+
+function analiticasFermentacionParaDeposito(dep,lote){
+  return lecturasFermentacionDeposito(dep,lote).map(function(x){
+    let partes=camposLecturaFermentacion(x).map(function(c){return c.campo+'='+c.valor;});
+    if(x.observaciones) partes.push('Observaciones='+x.observaciones);
     return {
-      dep:normalizarDep(x.deposito || dep),
-      fecha:x.fecha || '',
-      lote:x.lote || lote || '',
-      detalle:'CONTROL DE FERMENTACIÓN'+(partes.length ? ' | '+partes.join(' | ') : ''),
+      dep:normalizarDep(x.deposito||dep),fecha:x.fecha||'',lote:x.lote||lote||'',
+      detalle:'CONTROL DE FERMENTACIÓN'+(partes.length?' | '+partes.join(' | '):''),
       es_fermentacion:true
     };
   });
@@ -255,1320 +605,702 @@ function analiticasFermentacionParaDeposito(dep,lote){
 
 function seguimientoFermentacionHTML(dep,lote){
   let lect=lecturasFermentacionDeposito(dep,lote);
-
   if(!lect.length) return '';
 
-  let ordenadas=lect.slice().sort(function(a,b){
-    return valorFecha(b.fecha)-valorFecha(a.fecha);
-  });
-
+  let ordenadas=lect.slice().sort(function(a,b){return valorFecha(b.fecha)-valorFecha(a.fecha);});
   let cards=ordenadas.map(function(x){
     let datos=camposLecturaFermentacion(x);
-
     let grid=datos.length
       ? '<div class="ana-grid">'+datos.map(function(c){
-          return '<div class="ana-celda">'+
-            '<span class="ana-campo">'+esc(c.campo)+'</span>'+
-            '<span class="ana-valor">'+esc(c.valor)+'</span>'+
-          '</div>';
+          return '<div class="ana-celda"><span class="ana-campo">'+esc(c.campo)+'</span>'+
+                 '<span class="ana-valor">'+esc(c.valor)+'</span></div>';
         }).join('')+'</div>'
       : '<div class="vacio">Sin parámetros numéricos registrados.</div>';
-
-    let obs=x.observaciones
-      ? '<div style="margin-top:7px"><b>Observaciones:</b> '+esc(x.observaciones)+'</div>'
-      : '';
-
-    return '<div class="hist-card">'+
-      '<b>'+esc(x.fecha || '-')+'</b>'+
-      grid+
-      obs+
-    '</div>';
+    let obs=x.observaciones?'<div style="margin-top:7px"><b>Observaciones:</b> '+esc(x.observaciones)+'</div>':'';
+    return '<div class="hist-card"><b>'+esc(x.fecha||'-')+'</b>'+grid+obs+'</div>';
   }).join('');
 
   return '<details class="box"><summary>Seguimiento de fermentación</summary>'+
-    '<div class="historial-resumen">'+cards+'</div>'+
-  '</details>';
+         '<div class="historial-resumen">'+cards+'</div></details>';
 }
 
-function filasResumenConFermentacion(){
-  let filas=(RESUMEN_ANALITICAS && Array.isArray(RESUMEN_ANALITICAS.filas))
-    ? RESUMEN_ANALITICAS.filas.slice()
-    : [];
-
-  let diario=((FERMENTACIONES && FERMENTACIONES.diario) || []);
-
-  diario.forEach(function(x){
-    let dep=normalizarDep(x.deposito || '');
-    if(!dep) return;
-
-    let lote=String(x.lote || '').trim();
-
-    let existe=filas.some(function(f){
-      return normalizarDep(f.deposito)===dep &&
-             (!lote || !f.lote || String(f.lote)===lote);
-    });
-
-    if(existe) return;
-
-    let d=DEPOSITOS[dep] || {};
-
-    filas.push({
-      deposito:dep,
-      lote:lote || d.lote || '',
-      tipo:d.tipo || '',
-      volumen:d.volumen || 0,
-      fecha:x.fecha || '',
-      celdas:[],
-      alerta:false,
-      solo_fermentacion:true
-    });
-  });
-
-  return filas;
-}
-
-function renderResumenAnaliticas(){
-  let contenedor = document.getElementById('listaResumen');
-  let contador = document.getElementById('contadorResumen');
-
-  if(!contenedor || !contador) return;
-
-  let filas = filasResumenConFermentacion();
-
-  let filtro = normalizarTexto((document.getElementById('filtroResumen') || {}).value || '');
-
-  if(filtro){
-    filas = filas.filter(function(f){
-      let texto = [f.deposito, f.lote, f.tipo, f.fecha]
-        .concat((f.celdas || []).map(function(c){ return (c.campo || '')+' '+(c.valor || ''); }))
-        .join(' ');
-
-      let lect=lecturasFermentacionDeposito(f.deposito,f.lote);
-      texto += ' ' + lect.map(function(x){
-        return camposLecturaFermentacion(x).map(function(c){
-          return c.campo+' '+c.valor;
-        }).join(' ');
-      }).join(' ');
-
-      return normalizarTexto(texto).includes(filtro);
-    });
-  }
-
-  filas.sort(function(a,b){
-    return compararDepositosResumen(a.deposito,b.deposito);
-  });
-
-  contador.textContent = filas.length + (filas.length === 1 ? ' depósito' : ' depósitos') +
-    ((RESUMEN_ANALITICAS && RESUMEN_ANALITICAS.generado) ? ' | Actualizado: '+RESUMEN_ANALITICAS.generado : '');
-
-  if(filas.length === 0){
-    let tieneDatos =
-      (RESUMEN_ANALITICAS && Array.isArray(RESUMEN_ANALITICAS.filas) && RESUMEN_ANALITICAS.filas.length > 0) ||
-      ((FERMENTACIONES && FERMENTACIONES.diario) || []).length > 0;
-
-    contenedor.innerHTML = tieneDatos
-      ? '<div class="sin-resumen">No hay resultados con ese filtro.</div>'
-      : '<div class="sin-resumen"><b>El resumen todavía no está incluido en datos.json.</b><br>Se cargará automáticamente cuando Excel publique el visor con la nueva macro.</div>';
-    return;
-  }
-
-  contenedor.innerHTML = filas.map(function(f){
-    let celdas = (f.celdas || []).filter(function(c){
-      let campoNormal = normalizarTexto(c.campo || '').replace(/[_\s]/g,'');
-      let tieneValor = String(c.valor === undefined || c.valor === null ? '' : c.valor).trim() !== '';
-      let esCampoInterno = campoNormal === 'ORDENSISTEMA' || campoNormal === 'OBSERVACIONES';
-      return tieneValor && !esCampoInterno;
-    });
-
-    let detalleAnalitica = celdas.length > 0
-      ? '<div class="ana-grid">' + celdas.map(function(c){
-          return '<div class="ana-celda" style="'+esc(estiloCeldaAnalitica(c))+'">' +
-            '<span class="ana-campo">'+esc(c.campo || '-')+'</span>' +
-            '<span class="ana-valor">'+esc(c.valor || '-')+'</span>' +
-            '</div>';
-        }).join('') + '</div>'
-      : '<div class="vacio">Sin analítica convencional para el lote actual: <b>'+esc(f.lote || '-')+'</b>.</div>';
-
-    let seguimiento = seguimientoFermentacionHTML(f.deposito,f.lote);
-
-    return '<details class="ana-row'+(f.alerta ? ' alerta' : '')+'">' +
-      '<summary>' +
-        '<span class="ana-resumen-linea">'+esc(f.deposito || '-')+' | '+esc(f.tipo || '-')+' | '+fmt(f.volumen)+' L</span>' +
-        '<span class="ana-resumen-meta">Fecha usada: '+esc(f.fecha || '-')+(f.alerta ? ' | AVISO DEL EXCEL' : '')+'</span>' +
-      '</summary>' +
-      '<div class="ana-detalle">' +
-        '<div class="ana-lote"><b>Lote actual:</b> '+esc(f.lote || '-')+'</div>' +
-        detalleAnalitica +
-        seguimiento +
-      '</div>' +
-    '</details>';
-  }).join('');
-}
-
-function fmt(n){
-  return Math.round(Number(n || 0)).toLocaleString('es-ES');
-}
-
-function normalizarTexto(x){
-  let t = String(x || '').toUpperCase();
-  t = t.replace(/Á/g,'A').replace(/É/g,'E').replace(/Í/g,'I').replace(/Ó/g,'O').replace(/Ú/g,'U').replace(/Ü/g,'U');
-  return t;
-}
-
-function normalizarClaveTipo(x){
-  return normalizarTexto(String(x || '').replace(/\u00a0/g,' ')).trim().replace(/\s+/g,' ');
-}
-
-function colorLogicoDep(d){
-  if(!d || Number(d.volumen || 0) <= 0) return 'VACIO';
-
-  let clave = normalizarClaveTipo(d.tipo || '');
-  let desdeTabla = clave && Object.prototype.hasOwnProperty.call(COLORES_TIPO_VINO,clave)
-    ? COLORES_TIPO_VINO[clave]
-    : '';
-
-  let color = normalizarTexto(desdeTabla || d.color || '').trim();
-
-  if(color === 'TINTO' || color === 'BLANCO' || color === 'ROSADO') return color;
-  return 'SIN CLASIFICAR';
-}
-
-function colorDep(d){
-  let color = colorLogicoDep(d);
-  if(color === 'VACIO') return '#f5f5f5';
-  if(color === 'TINTO') return '#dc0000';
-  if(color === 'BLANCO') return '#ffe650';
-  if(color === 'ROSADO') return '#f4aac8';
-  return '#aaa';
-}
-
-function colorHigiene(h){
-  let t = normalizarTexto((h && (h.texto || h.estado)) || '');
-
-  if(t.includes('SOSA')) return '#7030a0';
-  if(t.includes('SOLO TINTO')) return '#78481e';
-  if(t.includes('DESINF')) return '#1f4e79';
-  if(t.includes('REVISAR')) return '#808080';
-  if(t.includes('APTO')) return '#000000';
-
-  return '#000000';
-}
-
-function textoHigiene(h){
-  if(!h) return '';
-
-  if(h.texto){
-    return String(h.texto);
-  }
-
-  let e = normalizarTexto(h.estado || '');
-
-  if(e.includes('SOSA')) return 'SOSA';
-  if(e.includes('SOLO TINTO')) return 'SOLO TINTO';
-  if(e.includes('DESINF')) return 'DESINF.';
-  if(e.includes('REVISAR')) return 'REVISAR';
-  if(e.includes('APTO')) return 'APTO';
-
-  return '';
-}
-
-function higieneDep(dep,d){
-  let buscado = String(dep || '').toUpperCase();
-
-  if(HIGIENE_DEPOSITOS[dep]){
-    return HIGIENE_DEPOSITOS[dep];
-  }
-
-  if(HIGIENE_DEPOSITOS[buscado]){
-    return HIGIENE_DEPOSITOS[buscado];
-  }
-
-  for(let k in HIGIENE_DEPOSITOS){
-    if(Object.prototype.hasOwnProperty.call(HIGIENE_DEPOSITOS,k)){
-      if(String(k || '').toUpperCase() === buscado){
-        return HIGIENE_DEPOSITOS[k];
-      }
+function lecturasGraficoProceso(id){
+  let raw=lecturasProceso(id), porDia={}, claves=[];
+  raw.forEach(function(x,indice){
+    let fecha=String(x.fecha||'').trim();
+    let clave=fecha||('SIN_FECHA_'+indice);
+    if(!porDia[clave]){
+      porDia[clave]=Object.assign({},x,{__indice:indice});
+      claves.push(clave);
+    }else{
+      let d=porDia[clave];
+      if(numeroFerm(x.densidad)!==null) d.densidad=x.densidad;
+      if(numeroFerm(x.temperatura)!==null) d.temperatura=x.temperatura;
+      if(x.descube_estado) d.descube_estado=x.descube_estado;
+      if(x.litros_descubados) d.litros_descubados=x.litros_descubados;
+      if(x.merma_descube) d.merma_descube=x.merma_descube;
     }
-  }
-
-  if(d && d.higiene){
-    return d.higiene;
-  }
-
-  return null;
-}
-
-function textColor(d,h){
-  if(d && colorLogicoDep(d) === 'TINTO' && Number(d.volumen || 0) > 0){
-    return 'white';
-  }
-
-  if(Number((d && d.volumen) || 0) <= 0 && h){
-    return colorHigiene(h);
-  }
-
-  return 'black';
-}
-
-function esc(x){
-  return String(x || '').replace(/[&<>]/g,function(c){
-    return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];
+  });
+  return claves.map(function(k){return porDia[k];}).sort(function(a,b){
+    let fa=valorFecha(a.fecha),fb=valorFecha(b.fecha);
+    if(fa!==fb) return fa-fb;
+    return (a.__indice||0)-(b.__indice||0);
   });
 }
 
-function detalleBonito(t){
-  return esc(t).replace(/\s*\|\s*/g,'<br>').replace(/=/g,': ');
+function numeroFerm(v){
+  if(v===null||v===undefined||String(v).trim()==='') return null;
+  if(typeof v==='number') return Number.isFinite(v)?v:null;
+  let s=String(v).trim().replace(/\s/g,'');
+  if(s.includes(',')&&s.includes('.')){
+    if(s.lastIndexOf(',')>s.lastIndexOf('.')) s=s.replace(/\./g,'').replace(',','.');
+    else s=s.replace(/,/g,'');
+  }else if(s.includes(',')){
+    s=s.replace(',','.');
+  }
+  let n=Number(s);
+  if(!isNaN(n)&&n>0&&n<10&&/^\d{1,3}\.\d{3}$/.test(s)) n=Number(s.replace('.',''));
+  return isNaN(n)?null:n;
 }
 
-function bloque(titulo,contenido){
-  return '<details class="box"><summary>'+titulo+'</summary>'+contenido+'</details>';
-}
+function svgGraficoFermentacion(proceso,modo){
+  let lect=lecturasGraficoProceso(proceso.id);
+  if(!lect.length) return '<div class="ferm-sin">El proceso existe, pero todavía no tiene lecturas de densidad o temperatura.</div>';
 
-function valorFecha(f){
-  let s = String(f || '').trim();
+  let dens=lect.map(function(x){return numeroFerm(x.densidad);});
+  let temp=lect.map(function(x){return numeroFerm(x.temperatura);});
+  let hayDens=dens.some(function(x){return x!==null;});
+  let hayTemp=temp.some(function(x){return x!==null;});
 
-  if(!s) return 0;
+  if(!hayDens&&!hayTemp) return '<div class="ferm-sin">Sin lecturas numéricas para representar.</div>';
+  if(modo==='densidad'&&!hayDens) modo='temperatura';
+  if(modo==='temperatura'&&!hayTemp) modo='densidad';
 
-  let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if(m){
-    return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1])).getTime();
-  }
+  let W=Math.max(650,lect.length*135),H=370,ML=72,MR=62,TOP=54,BOTTOM=48,GRAF_H=H-TOP-BOTTOM;
+  let xs=lect.map(function(_,i){
+    if(lect.length===1) return (ML+(W-MR))/2;
+    return ML+i*((W-MR)-ML)/(lect.length-1);
+  });
 
-  m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-  if(m){
-    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
-  }
+  let dvals=dens.filter(function(x){return x!==null;});
+  let tvals=temp.filter(function(x){return x!==null;});
+  let dmin=dvals.length?Math.min.apply(null,dvals):0,dmax=dvals.length?Math.max.apply(null,dvals):1;
+  let tmin=tvals.length?Math.min.apply(null,tvals):0,tmax=tvals.length?Math.max.apply(null,tvals):1;
+  let dPaso=20,dAxisMin=Math.floor(dmin/dPaso)*dPaso-dPaso,dAxisMax=Math.ceil(dmax/dPaso)*dPaso;
+  if(dAxisMax<=dAxisMin) dAxisMax=dAxisMin+dPaso*2;
+  let tPaso=1,tAxisMin=Math.floor(tmin)-2,tAxisMax=Math.ceil(tmax)+1;
+  if(tAxisMax<=tAxisMin) tAxisMax=tAxisMin+2;
 
-  let t = Date.parse(s);
-  return isNaN(t) ? 0 : t;
-}
-
-function numeroOrdenRegistro(x, indiceOriginal){
-  if(!x) return indiceOriginal || 0;
-
-  let posibles = [
-    x.orden_sistema,
-    x.Orden_Sistema,
-    x.ORDEN_SISTEMA,
-    x.orden,
-    x.Orden,
-    x.id,
-    x.ID,
-    x.Id
-  ];
-
-  for(let i = 0; i < posibles.length; i++){
-    let v = posibles[i];
-
-    if(v !== undefined && v !== null && String(v).trim() !== ''){
-      let n = Number(String(v).replace(/\./g,'').replace(',','.'));
-      if(!isNaN(n)) return n;
-    }
-  }
-
-  let detalle = String(x.detalle || '');
-
-  let m = detalle.match(/Orden[_\s]*Sistema\s*[:=]\s*([0-9.,]+)/i);
-  if(m && m[1]){
-    let n = Number(String(m[1]).replace(/\./g,'').replace(',','.'));
-    if(!isNaN(n)) return n;
-  }
-
-  return indiceOriginal || 0;
-}
-
-function ordenarFechaDesc(lista){
-  return (lista || [])
-    .map(function(x,i){
-      return {
-        item: x,
-        indice: i
-      };
-    })
-    .sort(function(a,b){
-      let fa = valorFecha(a.item.fecha);
-      let fb = valorFecha(b.item.fecha);
-
-      if(fb !== fa){
-        return fb - fa;
-      }
-
-      let oa = numeroOrdenRegistro(a.item, a.indice);
-      let ob = numeroOrdenRegistro(b.item, b.indice);
-
-      if(ob !== oa){
-        return ob - oa;
-      }
-
-      return b.indice - a.indice;
-    })
-    .map(function(x){
-      return x.item;
+  function yD(v){return TOP+(dAxisMax-v)/(dAxisMax-dAxisMin)*GRAF_H;}
+  function yT(v){return TOP+(tAxisMax-v)/(tAxisMax-tAxisMin)*GRAF_H;}
+  function path(vals,fnY){
+    let partes=[];
+    vals.forEach(function(v,i){
+      if(v===null) return;
+      partes.push((partes.length?'L':'M')+xs[i].toFixed(1)+' '+fnY(v).toFixed(1));
     });
-}
-
-function pintarLista(lista,clase){
-  let salida = ordenarFechaDesc(lista);
-
-  if(!salida || salida.length === 0){
-    return '<div class="vacio">Sin datos</div>';
+    return partes.join(' ');
   }
 
-  return salida.map(function(x){
-    let f = x.fecha ? '<b>'+esc(x.fecha)+'</b><br>' : '';
-    return '<div class="item '+clase+'">'+f+detalleBonito(x.detalle || '')+'</div>';
-  }).join('');
-}
+  function adicionesDelProceso(){
+    let dep=normalizarDep(proceso.deposito_actual||(lect[0]&&lect[0].deposito)||'');
+    let lote=String(proceso.lote_actual||(lect[0]&&lect[0].lote)||'').trim();
+    let fIni=valorFecha(proceso.fecha_inicio||''),fFin=valorFecha(proceso.fecha_fin||'');
+    return (ADICIONES||[]).filter(function(a){
+      if(normalizarDep(a.dep||a.deposito||'')!==dep) return false;
+      let loteAdi=campo(a,['lote','Lote','lote_resultante','lote_origen'])||
+                  campoDetalle(a,['Lote_Int_Momento','Lote Int Momento']);
+      if(lote&&loteAdi&&String(loteAdi).trim()!==lote) return false;
+      let fa=valorFecha(a.fecha||'');
+      if(fIni&&fa&&fa<fIni) return false;
+      if(fFin&&fa&&fa>fFin) return false;
+      return true;
+    }).sort(function(a,b){return valorFecha(a.fecha)-valorFecha(b.fecha);});
+  }
 
-function campo(x,nombres){
-  if(!x) return '';
+  function textoAdicion(a){
+    let tipo=campoDetalle(a,['Tipo_Aditivo','Tipo Aditivo']);
+    let producto=campoDetalle(a,['Producto']);
+    let cantidad=campoDetalle(a,['Cantidad']);
+    let unidad=campoDetalle(a,['Unidad']);
+    return {linea1:[tipo,producto].filter(Boolean).join(': ')||'ADICIÓN',
+            linea2:[cantidad,unidad].filter(Boolean).join(' ')};
+  }
 
-  for(let i=0;i<nombres.length;i++){
-    let n = nombres[i];
+  let indiceFecha={};
+  lect.forEach(function(x,i){indiceFecha[String(x.fecha||'').trim()]=i;});
 
-    if(x[n] !== undefined && x[n] !== null && String(x[n]).trim() !== ''){
-      return String(x[n]).trim();
+  let svg='<div class="ferm-chart"><svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Gráfico de fermentación">';
+  svg+='<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="white"/>';
+
+  for(let g=0;g<=6;g++){
+    let y=TOP+g*GRAF_H/6;
+    svg+='<line x1="'+ML+'" y1="'+y+'" x2="'+(W-MR)+'" y2="'+y+'" stroke="#d9d9d9" stroke-width="1"/>';
+  }
+
+  if((modo==='densidad'||modo==='ambas')&&hayDens){
+    svg+='<line x1="'+ML+'" y1="'+TOP+'" x2="'+ML+'" y2="'+(H-BOTTOM)+'" stroke="#666"/>';
+    for(let v=dAxisMin;v<=dAxisMax+0.001;v+=dPaso){
+      let y=yD(v);
+      svg+='<text x="'+(ML-10)+'" y="'+(y+4)+'" text-anchor="end" font-size="11" fill="#333">'+Math.round(v)+'</text>';
     }
+    svg+='<text x="18" y="'+(TOP+GRAF_H/2)+'" text-anchor="middle" font-size="11" font-weight="bold" fill="#333" transform="rotate(-90 18 '+(TOP+GRAF_H/2)+')">Densidad</text>';
   }
 
-  let buscados = nombres.map(function(n){
-    return normalizarTexto(n).replace(/_/g,'');
+  if((modo==='temperatura'||modo==='ambas')&&hayTemp){
+    svg+='<line x1="'+(W-MR)+'" y1="'+TOP+'" x2="'+(W-MR)+'" y2="'+(H-BOTTOM)+'" stroke="#666"/>';
+    for(let v=tAxisMin;v<=tAxisMax+0.001;v+=tPaso){
+      let y=yT(v);
+      svg+='<text x="'+(W-MR+10)+'" y="'+(y+4)+'" text-anchor="start" font-size="11" fill="#333">'+String(v).replace('.',',')+'</text>';
+    }
+    svg+='<text x="'+(W-16)+'" y="'+(TOP+GRAF_H/2)+'" text-anchor="middle" font-size="11" font-weight="bold" fill="#333" transform="rotate(-90 '+(W-16)+' '+(TOP+GRAF_H/2)+')">Temperatura</text>';
+  }
+
+  svg+='<line x1="'+ML+'" y1="'+(H-BOTTOM)+'" x2="'+(W-MR)+'" y2="'+(H-BOTTOM)+'" stroke="#666"/>';
+  lect.forEach(function(x,i){
+    svg+='<text x="'+xs[i]+'" y="'+(H-18)+'" text-anchor="middle" font-size="11" fill="#555">'+esc(String(x.fecha||'').substring(0,5))+'</text>';
   });
 
-  for(let k in x){
-    if(Object.prototype.hasOwnProperty.call(x,k)){
-      let nk = normalizarTexto(k).replace(/_/g,'');
+  if((modo==='densidad'||modo==='ambas')&&hayDens){
+    svg+='<path d="'+path(dens,yD)+'" fill="none" stroke="#4472C4" stroke-width="3"/>';
+    dens.forEach(function(v,i){
+      if(v===null) return;
+      let x=xs[i],y=yD(v);
+      svg+='<polygon points="'+x+','+(y-5)+' '+(x+5)+','+y+' '+x+','+(y+5)+' '+(x-5)+','+y+'" fill="#4472C4"><title>Densidad '+v+'</title></polygon>';
+    });
+  }
 
-      if(buscados.includes(nk)){
-        if(x[k] !== undefined && x[k] !== null && String(x[k]).trim() !== ''){
-          return String(x[k]).trim();
-        }
-      }
+  if((modo==='temperatura'||modo==='ambas')&&hayTemp){
+    svg+='<path d="'+path(temp,yT)+'" fill="none" stroke="#C8463A" stroke-width="3"/>';
+    temp.forEach(function(v,i){
+      if(v===null) return;
+      let x=xs[i],y=yT(v);
+      svg+='<rect x="'+(x-4)+'" y="'+(y-4)+'" width="8" height="8" fill="#C8463A"><title>Temperatura '+String(v).replace('.',',')+' °C</title></rect>';
+    });
+  }
+
+  if((modo==='densidad'||modo==='ambas')&&hayDens){
+    let apiladas={};
+    adicionesDelProceso().forEach(function(a){
+      let fecha=String(a.fecha||'').trim();
+      let idx=Object.prototype.hasOwnProperty.call(indiceFecha,fecha)?indiceFecha[fecha]:-1;
+      if(idx<0||dens[idx]===null) return;
+      let x=xs[idx],y=yD(dens[idx]),nivel=apiladas[idx]||0;
+      apiladas[idx]=nivel+1;
+      let txt=textoAdicion(a),labelY=y-18-nivel*23;
+      if(labelY<25) labelY=y+25+nivel*23;
+      svg+='<polygon points="'+x+','+(y-6)+' '+(x+6)+','+y+' '+x+','+(y+6)+' '+(x-6)+','+y+'" fill="#C0504D"><title>'+esc((a.fecha||'')+' · '+txt.linea1+(txt.linea2?' · '+txt.linea2:''))+'</title></polygon>';
+      svg+='<text x="'+x+'" y="'+labelY+'" text-anchor="middle" font-size="9" fill="#222">'+esc(txt.linea1)+'</text>';
+      if(txt.linea2) svg+='<text x="'+x+'" y="'+(labelY+11)+'" text-anchor="middle" font-size="9" fill="#222">'+esc(txt.linea2)+'</text>';
+    });
+  }
+
+  svg+='</svg></div>';
+  return svg;
+}
+
+function eventosFermentacion(proceso){
+  let eventos=[];
+  lecturasProceso(proceso.id).forEach(function(x){
+    if(x.adicion_producto||x.adicion_tipo||x.adicion_estado){
+      eventos.push('<div class="ferm-evento"><b>'+esc(x.fecha||'-')+' · Adición</b><br>'+
+        esc([x.adicion_tipo,x.adicion_producto,x.adicion_cantidad].filter(Boolean).join(' · ')||x.adicion_estado)+'</div>');
     }
-  }
-
-  return '';
-}
-
-function campoDetalle(x,nombres){
-  let detalle = String((x && x.detalle) || '');
-
-  if(!detalle) return '';
-
-  for(let i=0;i<nombres.length;i++){
-    let n = nombres[i];
-
-    let patrones = [
-      n,
-      n.replace(/_/g,' '),
-      n.replace(/ /g,'_')
-    ];
-
-    for(let j=0;j<patrones.length;j++){
-      let p = patrones[j].replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-      let re = new RegExp(p + '\\s*[:=]\\s*([^|\\n\\r]+)', 'i');
-      let m = detalle.match(re);
-
-      if(m && m[1]){
-        return String(m[1]).trim();
-      }
+    if(x.descube_estado){
+      eventos.push('<div class="ferm-evento descube"><b>'+esc(x.fecha||'-')+' · Descube</b><br>'+
+        esc([x.descube_estado,x.litros_descubados?fmt(x.litros_descubados)+' L':'',
+             x.merma_descube?'Merma '+fmt(x.merma_descube)+' L':''].filter(Boolean).join(' · '))+'</div>');
     }
-  }
-
-  return '';
-}
-
-function loteOrigenMovimiento(x,loteActual){
-  let directo = campo(x,[
-    'lote_origen_momento',
-    'Lote_Origen_Momento',
-    'lote_origen',
-    'Lote_Origen',
-    'lote_anterior',
-    'Lote_Anterior'
-  ]);
-
-  if(directo) return directo;
-
-  let desdeDetalle = campoDetalle(x,[
-    'Lote_Origen_Momento',
-    'Lote Origen Momento',
-    'Lote_Origen',
-    'Lote Origen',
-    'Lote_Anterior',
-    'Lote Anterior'
-  ]);
-
-  if(desdeDetalle) return desdeDetalle;
-
-  let lote = campo(x,['lote','Lote']);
-
-  if(lote && lote !== loteActual){
-    return lote;
-  }
-
-  return loteActual;
-}
-
-function renderTabs(){
-  let t = document.getElementById('tabs');
-  t.innerHTML = '';
-
-  MAPAS.forEach(function(m,i){
-    let b = document.createElement('button');
-    b.textContent = m.nombre;
-    b.className = i === mapaActual ? 'active' : '';
-    b.onclick = function(){
-      mapaActual = i;
-      render();
-    };
-    t.appendChild(b);
   });
+  return eventos.length?'<div class="ferm-eventos">'+eventos.join('')+'</div>':'';
 }
+
+function cambiarModoGrafico(id,modo){
+  if(!id||['densidad','temperatura','ambas'].indexOf(modo)<0) return;
+  MODO_GRAFICO_FERM[id]=modo;
+  let cont=document.getElementById('ferm_'+String(id).replace(/[^a-zA-Z0-9_-]/g,'_'));
+  if(!cont) return;
+  let p=((FERMENTACIONES.procesos||[]).filter(function(x){return String(x.id)===String(id);})[0])||{id:id};
+  cont.innerHTML=contenidoFermentacion(p);
+}
+
+function contenidoFermentacion(p){
+  let modo=MODO_GRAFICO_FERM[p.id]||'ambas';
+  let idSeguro=escAttr(p.id||'');
+  let html='<div class="ferm-panel">'+
+    '<div class="ferm-meta"><b>Proceso:</b> '+esc(p.id||'-')+'<br>'+
+    '<b>Estado:</b> '+esc(p.estado||'-')+'<br>'+
+    '<b>Inicio:</b> '+esc(p.fecha_inicio||'-')+'<br>'+
+    '<b>Protocolo:</b> '+esc(p.protocolo||'-')+'</div>'+
+    '<div class="ferm-controls">'+
+      '<button type="button" data-ferm-id="'+idSeguro+'" data-ferm-modo="densidad" class="'+(modo==='densidad'?'active':'')+'">Densidad</button>'+
+      '<button type="button" data-ferm-id="'+idSeguro+'" data-ferm-modo="temperatura" class="'+(modo==='temperatura'?'active':'')+'">Temperatura</button>'+
+      '<button type="button" data-ferm-id="'+idSeguro+'" data-ferm-modo="ambas" class="'+(modo==='ambas'?'active':'')+'">Ambas</button>'+
+    '</div>'+svgGraficoFermentacion(p,modo)+eventosFermentacion(p);
+
+  let padres=Array.isArray(p.padres)?p.padres:[];
+  if(padres.length){
+    html+=bloque('Fermentaciones de origen',padres.map(function(id){
+      let pp=(FERMENTACIONES.procesos||[]).filter(function(x){return String(x.id)===String(id);})[0];
+      return pp?'<details class="box"><summary>'+esc(pp.id)+'</summary>'+contenidoFermentacion(pp)+'</details>'
+               :'<div class="vacio">'+esc(id)+'</div>';
+    }).join(''));
+  }
+  html+='</div>';
+  return html;
+}
+
+function bloqueFermentacion(dep,lote){
+  if(!String(lote||'').trim()) return '';
+  let p=procesoPorDeposito(dep,lote);
+  if(!p) return '';
+  let sid=String(p.id||'').replace(/[^a-zA-Z0-9_-]/g,'_');
+  /* SIN OPEN: aparece plegada */
+  return '<details class="box"><summary>Gráfica de fermentación</summary>'+
+         '<div id="ferm_'+sid+'">'+contenidoFermentacion(p)+'</div></details>';
+}
+
+document.addEventListener('click',function(ev){
+  let boton=ev.target&&ev.target.closest
+    ? ev.target.closest('.ferm-controls button[data-ferm-modo]')
+    : null;
+  if(!boton) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  cambiarModoGrafico(boton.getAttribute('data-ferm-id'),boton.getAttribute('data-ferm-modo'));
+});
+
+/* =========================================================
+   RECUENTO_BODEGA MANDA SOBRE LOS LITROS ACTUALES
+   ========================================================= */
+
+function actualizarVolumenesFermentacion(){
+  /*
+    Antes esta función recalculaba DEPOSITOS con fermentaciones.
+    Eso podía convertir A11 (0 L en RECUENTO_BODEGA) en 80.000 L.
+    Ahora DEPOSITOS no se toca. Solo sincronizamos el resumen.
+  */
+  if(RESUMEN_ANALITICAS&&Array.isArray(RESUMEN_ANALITICAS.filas)){
+    RESUMEN_ANALITICAS.filas.forEach(function(f){
+      let dep=normalizarDep(f.deposito||'');
+      let d=DEPOSITOS[dep];
+      if(d){
+        f.volumen=Number(d.volumen||0);
+        f.tipo=d.tipo||f.tipo||'';
+        f.lote=d.lote||f.lote||'';
+      }
+    });
+  }
+}
+
+/* =========================================================
+   RESTO DE FUNCIONES DE TRAZABILIDAD / HIGIENE / PLANO
+   Se conservan con la misma lógica funcional.
+   ========================================================= */
+
+
+/* Compatibilidad con el index anterior: se conservan estas funciones.
+   Ya NO se usan para modificar DEPOSITOS. */
 function numeroLitrosFerm(v){
-
-  let s=String(
-    v===undefined || v===null ? '' : v
-  ).trim().replace(/\s/g,'');
-
+  let s=String(v===undefined||v===null?'':v).trim().replace(/\s/g,'');
   if(!s) return null;
 
-  /*
-    35,000  -> 35000
-    18.000  -> 18000
-    4100    -> 4100
-    18,5    -> 18.5
-  */
   if(/^[-+]?\d{1,3}([.,]\d{3})+$/.test(s)){
     return Number(s.replace(/[.,]/g,''));
   }
 
-  if(s.indexOf('.')>=0 && s.indexOf(',')>=0){
+  if(s.indexOf('.')>=0&&s.indexOf(',')>=0){
     s=s.replace(/\./g,'').replace(',','.');
-  }
-  else if(s.indexOf(',')>=0){
-
-    let p=s.split(',');
-
-    if(p.length===2 && p[1].length===3){
-      s=p.join('');
-    }else{
-      s=s.replace(',','.');
-    }
-
+  }else if(s.indexOf(',')>=0){
+    let partes=s.split(',');
+    if(partes.length===2&&partes[1].length===3) s=partes.join('');
+    else s=s.replace(',','.');
   }
 
   let n=Number(s);
-
-  return isNaN(n) ? null : n;
+  return isNaN(n)?null:n;
 }
-
 
 function volumenActualFermentacion(dep,lote,volumenOriginal){
-
   let p=procesoPorDeposito(dep,lote);
 
-  if(
-    !p ||
-    normalizarTexto(p.estado || '')!=='ACTIVO'
-  ){
-    return Number(volumenOriginal || 0);
+  if(!p||normalizarTexto(p.estado||'')!=='ACTIVO'){
+    return Number(volumenOriginal||0);
   }
 
+  let total=0,encontrados=0;
 
-  let total=0;
-  let encontrados=0;
+  (MOVIMIENTOS||[]).forEach(function(m){
+    let proc=campo(m,['Proceso_Ferm_ID','proceso_ferm_id'])||
+             campoDetalle(m,['Proceso_Ferm_ID']);
 
+    if(String(proc||'')!==String(p.id||'')) return;
 
-  (MOVIMIENTOS || []).forEach(function(m){
+    let tipo=normalizarTexto(
+      campo(m,['Tipo_Evento','tipo_evento','evento'])||
+      campoDetalle(m,['Tipo_Evento'])
+    );
 
-    let proc=
-      campo(m,[
-        'Proceso_Ferm_ID',
-        'proceso_ferm_id'
-      ]) ||
-      campoDetalle(m,[
-        'Proceso_Ferm_ID'
-      ]);
+    if(tipo!=='ENTRADA_ORIGEN'&&tipo!=='APORTE_FERMENTACION') return;
 
-
-    if(
-      String(proc || '') !==
-      String(p.id || '')
-    ){
-      return;
-    }
-
-
-    let tipo=
-      normalizarTexto(
-        campo(m,[
-          'Tipo_Evento',
-          'tipo_evento',
-          'evento'
-        ]) ||
-        campoDetalle(m,[
-          'Tipo_Evento'
-        ])
-      );
-
-
-    if(
-      tipo!=='ENTRADA_ORIGEN' &&
-      tipo!=='APORTE_FERMENTACION'
-    ){
-      return;
-    }
-
-
-    /*
-      IMPORTANTE:
-      primero buscamos en detalle porque actualmente
-      el campo "litros" de estos movimientos está
-      llegando a 0.
-    */
-    let volumen=
-      campoDetalle(m,[
-        'Volumen_L (+/-)',
-        'Volumen_L'
-      ]) ||
-      campo(m,[
-        'Volumen_L',
-        'volumen_l'
-      ]);
-
+    let volumen=campoDetalle(m,['Volumen_L (+/-)','Volumen_L'])||
+                campo(m,['Volumen_L','volumen_l']);
 
     let n=numeroLitrosFerm(volumen);
-
-
     if(n!==null){
-
       total+=n;
       encontrados++;
-
     }
-
   });
 
-
-  return encontrados>0 ?
-         total :
-         Number(volumenOriginal || 0);
+  return encontrados>0?total:Number(volumenOriginal||0);
 }
 
-
-function actualizarVolumenesFermentacion(){
-
-  Object.keys(DEPOSITOS || {}).forEach(function(dep){
-
-    let d=DEPOSITOS[dep];
-
-    if(!d) return;
-
-
-    d.volumen=
-      volumenActualFermentacion(
-        dep,
-        d.lote || '',
-        d.volumen
-      );
-
-  });
-
-
-  /*
-    Actualizamos también el volumen mostrado
-    en RESUMEN DE ANALÍTICAS.
-  */
-  if(
-    RESUMEN_ANALITICAS &&
-    Array.isArray(RESUMEN_ANALITICAS.filas)
-  ){
-
-    RESUMEN_ANALITICAS.filas.forEach(function(f){
-
-      let d=
-        DEPOSITOS[f.deposito];
-
-      if(d){
-        f.volumen=d.volumen;
-      }
-
-    });
-
-  }
-
-}
 function render(){
   renderTabs();
+  let c=document.getElementById('canvas');
+  c.innerHTML='';
 
-  let c = document.getElementById('canvas');
-  c.innerHTML = '';
-
-  if(!MAPAS || MAPAS.length === 0){
-    document.getElementById('info').innerHTML = '<div class="error">No hay mapas cargados en datos.json.</div>';
+  if(!MAPAS||MAPAS.length===0){
+    document.getElementById('info').innerHTML='<div class="error">No hay mapas cargados en datos.json.</div>';
     return;
   }
 
-  let maxX = 1200;
-  let maxY = 600;
+  let maxX=1200,maxY=600;
 
   MAPAS[mapaActual].deps.forEach(function(p){
-    maxX = Math.max(maxX, Number(p.x) + Number(p.w) + 80);
-    maxY = Math.max(maxY, Number(p.y) + Number(p.h) + 80);
+    maxX=Math.max(maxX,Number(p.x)+Number(p.w)+80);
+    maxY=Math.max(maxY,Number(p.y)+Number(p.h)+80);
 
-    let d = DEPOSITOS[p.dep] || {
-      dep:p.dep,
-      volumen:0,
-      capacidad:0,
-      tipo:'',
-      estado:'',
-      lote:'',
-      fecha:'',
-      color:'VACIO'
-    };
+    let d=DEPOSITOS[p.dep]||{dep:p.dep,volumen:0,capacidad:0,tipo:'',estado:'',lote:'',fecha:'',color:'VACIO'};
+    let h=higieneDep(p.dep,d);
+    let e=document.createElement('div');
+    e.className='dep';
+    e.style.left=p.x+'px'; e.style.top=p.y+'px'; e.style.width=p.w+'px'; e.style.height=p.h+'px';
+    e.style.background=colorDep(d); e.style.color=textColor(d,h);
 
-    let h = higieneDep(p.dep,d);
+    let ratio=d.capacidad>0?Math.max(0,Math.min(1,d.volumen/d.capacidad)):0;
+    let textoCentral=Number(d.volumen||0)>0?esc(d.tipo||'SIN CLASIFICAR'):esc(textoHigiene(h)||'VACIO');
+    let textoExtra='';
+    if(Number(d.volumen||0)>0&&d.estado) textoExtra='<br>'+esc(d.estado);
+    if(Number(d.volumen||0)<=0&&!h&&d.estado) textoExtra='<br>'+esc(d.estado);
 
-    let e = document.createElement('div');
-    e.className = 'dep';
-    e.style.left = p.x + 'px';
-    e.style.top = p.y + 'px';
-    e.style.width = p.w + 'px';
-    e.style.height = p.h + 'px';
-    e.style.background = colorDep(d);
-    e.style.color = textColor(d,h);
+    e.innerHTML='<div class="bar"><div class="fill" style="height:'+(ratio*100)+'%;background:'+colorDep(d)+'"></div></div>'+
+      '<div>'+esc(p.label||p.dep)+'<br>'+fmt(d.volumen)+' / '+fmt(d.capacidad)+' L<br>'+textoCentral+textoExtra+'</div>';
 
-    let ratio = d.capacidad > 0 ? Math.max(0,Math.min(1,d.volumen/d.capacidad)) : 0;
-
-    let textoCentral = Number(d.volumen || 0) > 0
-      ? esc(d.tipo || 'SIN CLASIFICAR')
-      : esc(textoHigiene(h) || 'VACIO');
-
-    let textoExtra = '';
-
-    if(Number(d.volumen || 0) > 0 && d.estado){
-      textoExtra = '<br>'+esc(d.estado);
-    }
-
-    if(Number(d.volumen || 0) <= 0 && !h && d.estado){
-      textoExtra = '<br>'+esc(d.estado);
-    }
-
-    e.innerHTML =
-      '<div class="bar"><div class="fill" style="height:'+(ratio*100)+'%;background:'+colorDep(d)+'"></div></div>' +
-      '<div>' +
-      esc(p.label || p.dep) + '<br>' +
-      fmt(d.volumen) + ' / ' + fmt(d.capacidad) + ' L<br>' +
-      textoCentral +
-      textoExtra +
-      '</div>';
-
-    e.onclick = function(){
-      showDep(p.dep,d);
-    };
-
+    e.onclick=function(){showDep(p.dep,d);};
     c.appendChild(e);
   });
 
-  c.style.width = maxX + 'px';
-  c.style.height = maxY + 'px';
+  c.style.width=maxX+'px';
+  c.style.height=maxY+'px';
 }
 
 function perteneceLote(x,lote){
   if(!lote) return false;
-
-  let valores = [
-    campo(x,['lote','Lote']),
-    campo(x,['lote_resultante','Lote_Resultante']),
-    campo(x,['lote_origen','Lote_Origen']),
-    campo(x,['lote_origen_momento','Lote_Origen_Momento']),
+  let valores=[
+    campo(x,['lote','Lote']),campo(x,['lote_resultante','Lote_Resultante']),
+    campo(x,['lote_origen','Lote_Origen']),campo(x,['lote_origen_momento','Lote_Origen_Momento']),
     campoDetalle(x,['Lote_Resultante','Lote_Origen','Lote_Origen_Momento'])
   ];
-
-  if(valores.some(function(v){ return String(v || '') === String(lote || ''); })){
-    return true;
-  }
-
-  return String(x.detalle || '').includes(lote);
-}
-
-function normalizarDep(x){
-  let t = String(x || '').trim().toUpperCase();
-
-  t = t.replace(/^ACTUAL\s*:\s*/i,'');
-  t = t.replace(/^ORIGEN\s*:\s*/i,'');
-  t = t.replace(/^DESTINO\s*:\s*/i,'');
-  t = t.replace(/^DEP[ÓO]SITO\s*:\s*/i,'');
-  t = t.replace(/^DEPOSITO\s*:\s*/i,'');
-
-  return t.trim();
+  if(valores.some(function(v){return String(v||'')===String(lote||'');})) return true;
+  return String(x.detalle||'').includes(lote);
 }
 
 function depositoMovimiento(x){
-  let valores = [
+  let valores=[
     campo(x,['dep','Dep','deposito','Deposito','depósito','Depósito']),
-    campo(x,['origen','Origen']),
-    campo(x,['destino','Destino']),
+    campo(x,['origen','Origen']),campo(x,['destino','Destino']),
     campoDetalle(x,['Depósito','Deposito','Dep','Actual','Origen','Destino'])
   ];
-
-  for(let i = 0; i < valores.length; i++){
-    if(String(valores[i] || '').trim() !== ''){
-      return normalizarDep(valores[i]);
-    }
+  for(let i=0;i<valores.length;i++){
+    if(String(valores[i]||'').trim()!=='') return normalizarDep(valores[i]);
   }
-
   return '';
 }
-
-function origenMovimiento(x){
-  return normalizarDep(
-    campo(x,['origen','Origen']) ||
-    campoDetalle(x,['Origen'])
-  );
-}
-
-function destinoMovimiento(x){
-  return normalizarDep(
-    campo(x,['destino','Destino']) ||
-    campoDetalle(x,['Destino'])
-  );
-}
+function origenMovimiento(x){return normalizarDep(campo(x,['origen','Origen'])||campoDetalle(x,['Origen']));}
+function destinoMovimiento(x){return normalizarDep(campo(x,['destino','Destino'])||campoDetalle(x,['Destino']));}
 
 function tipoMovimientoVisor(x){
-  let valores = [
-    campo(x,['evento','Evento']),
-    campo(x,['tipo','Tipo']),
-    campo(x,['tipo_movimiento','Tipo_Movimiento']),
-    campo(x,['movimiento','Movimiento']),
-    campo(x,['operacion','Operacion','operación','Operación']),
+  let valores=[
+    campo(x,['evento','Evento']),campo(x,['tipo','Tipo']),campo(x,['tipo_movimiento','Tipo_Movimiento']),
+    campo(x,['movimiento','Movimiento']),campo(x,['operacion','Operacion','operación','Operación']),
     campo(x,['accion','Accion','acción','Acción']),
     campoDetalle(x,['Evento','Tipo','Tipo_Movimiento','Movimiento','Operacion','Operación','Accion','Acción']),
-    x && x.detalle ? x.detalle : ''
+    x&&x.detalle?x.detalle:''
   ];
-
   return normalizarTexto(valores.join(' '));
 }
 
 function litrosMovimiento(x){
-  let v =
-    campo(x,['litros','Litros','volumen','Volumen','cantidad','Cantidad']) ||
-    campoDetalle(x,['Litros','Volumen','Cantidad']);
-
-  v = String(v || '0')
-    .replace(/\./g,'')
-    .replace(',','.');
-
-  let n = Number(v);
-
-  return isNaN(n) ? 0 : n;
+  let v=campo(x,['litros','Litros','volumen','Volumen','cantidad','Cantidad'])||
+        campoDetalle(x,['Litros','Volumen','Cantidad']);
+  v=String(v||'0').replace(/\./g,'').replace(',','.');
+  let n=Number(v);
+  return isNaN(n)?0:n;
 }
 
 function esSalidaMovimiento(x){
-  let t = tipoMovimientoVisor(x);
-
-  if(t.includes('SALIDA_CLIENTE')) return true;
-  if(t.includes('SALIDA CLIENTE')) return true;
-  if(t.includes('CLIENTE')) return true;
-  if(t.includes('EMBOTELLADO')) return true;
-  if(t.includes('ENVIO')) return true;
-  if(t.includes('ENVÍO')) return true;
-  if(t.includes('CARGA')) return true;
-  if(t.includes('SALIDA')) return true;
-
-  if(t.includes('MERMA')){
-    return litrosMovimiento(x) < 0;
-  }
-
+  let t=tipoMovimientoVisor(x);
+  if(t.includes('SALIDA_CLIENTE')||t.includes('SALIDA CLIENTE')||t.includes('CLIENTE')||
+     t.includes('EMBOTELLADO')||t.includes('ENVIO')||t.includes('ENVÍO')||t.includes('CARGA')||
+     t.includes('SALIDA')) return true;
+  if(t.includes('MERMA')) return litrosMovimiento(x)<0;
   return false;
 }
 
 function esEntradaMovimiento(x){
-  let t = tipoMovimientoVisor(x);
-
-  if(t.includes('ENTRADA')) return true;
-  if(t.includes('RECEPCION')) return true;
-  if(t.includes('RECEPCIÓN')) return true;
-  if(t.includes('RECEPCION_BODEGA')) return true;
-  if(t.includes('RECEPCIÓN_BODEGA')) return true;
-
-  if(t.includes('MERMA')){
-    return litrosMovimiento(x) > 0;
-  }
-
+  let t=tipoMovimientoVisor(x);
+  if(t.includes('ENTRADA')||t.includes('RECEPCION')||t.includes('RECEPCIÓN')||
+     t.includes('RECEPCION_BODEGA')||t.includes('RECEPCIÓN_BODEGA')) return true;
+  if(t.includes('MERMA')) return litrosMovimiento(x)>0;
   return false;
 }
 
 function movimientoPerteneceADeposito(x,dep){
-  let depBuscado = normalizarDep(dep);
-
-  let posibles = [
-    depositoMovimiento(x),
-    origenMovimiento(x),
-    destinoMovimiento(x),
+  let depBuscado=normalizarDep(dep);
+  let posibles=[
+    depositoMovimiento(x),origenMovimiento(x),destinoMovimiento(x),
     normalizarDep(campo(x,['dep','Dep'])),
     normalizarDep(campo(x,['deposito','Deposito','depósito','Depósito'])),
     normalizarDep(campoDetalle(x,['Depósito','Deposito','Actual','Origen','Destino']))
   ];
-
-  return posibles.some(function(v){
-    return v && v === depBuscado;
-  });
+  return posibles.some(function(v){return v&&v===depBuscado;});
 }
 
 function eventosNodo(dep,lote){
-  let depBuscado = normalizarDep(dep);
-
-  let entradas = MOVIMIENTOS.filter(function(x){
+  let depBuscado=normalizarDep(dep);
+  let entradas=MOVIMIENTOS.filter(function(x){
     if(!perteneceLote(x,lote)) return false;
-
-    let destino = destinoMovimiento(x);
-
-    if(destino && destino === depBuscado) return true;
-
-    return movimientoPerteneceADeposito(x,depBuscado) && esEntradaMovimiento(x);
+    let destino=destinoMovimiento(x);
+    if(destino&&destino===depBuscado) return true;
+    return movimientoPerteneceADeposito(x,depBuscado)&&esEntradaMovimiento(x);
   });
-
-  let salidas = MOVIMIENTOS.filter(function(x){
+  let salidas=MOVIMIENTOS.filter(function(x){
     if(!perteneceLote(x,lote)) return false;
-
-    let origen = origenMovimiento(x);
-
-    if(origen && origen === depBuscado) return true;
-
-    return movimientoPerteneceADeposito(x,depBuscado) && esSalidaMovimiento(x);
+    let origen=origenMovimiento(x);
+    if(origen&&origen===depBuscado) return true;
+    return movimientoPerteneceADeposito(x,depBuscado)&&esSalidaMovimiento(x);
   });
-
-  let adis = ADICIONES.filter(function(x){
-    return normalizarDep(x.dep) === depBuscado && perteneceLote(x,lote);
-  });
-
-  let anas = ANALITICAS.filter(function(x){
-    return normalizarDep(x.dep) === depBuscado && perteneceLote(x,lote);
-  });
-
-  /*
-    Los controles de FERM_DIARIO se incorporan visualmente
-    al bloque Analíticas sin modificar la hoja ANALITICAS de Excel.
-  */
-  anas = anas.concat(
-    analiticasFermentacionParaDeposito(dep,lote)
-  );
-
-  return {
-    entradas: entradas,
-    salidas: salidas,
-    adis: adis,
-    anas: anas
-  };
+  let adis=ADICIONES.filter(function(x){return normalizarDep(x.dep)===depBuscado&&perteneceLote(x,lote);});
+  let anas=ANALITICAS.filter(function(x){return normalizarDep(x.dep)===depBuscado&&perteneceLote(x,lote);});
+  anas=anas.concat(analiticasFermentacionParaDeposito(dep,lote));
+  return {entradas:entradas,salidas:salidas,adis:adis,anas:anas};
 }
 
 function textoMovimiento(x){
-  let partes = [];
-
+  let partes=[];
   ['tipo','tipo_movimiento','movimiento','operacion','accion','detalle'].forEach(function(k){
-    if(x && x[k]) partes.push(String(x[k]));
+    if(x&&x[k]) partes.push(String(x[k]));
   });
-
   return partes.join(' ').toLowerCase();
 }
-
-function esMezcla(x){
-  let t = textoMovimiento(x);
-  return t.includes('mezcla') || t.includes('mix');
-}
-
-function claveAnalitica(x){
-  return String(x.dep || '') + '|' +
-         String(x.fecha || '') + '|' +
-         String(x.lote || '') + '|' +
-         String(x.detalle || '');
-}
+function esMezcla(x){let t=textoMovimiento(x);return t.includes('mezcla')||t.includes('mix');}
+function claveAnalitica(x){return String(x.dep||'')+'|'+String(x.fecha||'')+'|'+String(x.lote||'')+'|'+String(x.detalle||'');}
 
 function ultimaAnaliticaDeDeposito(dep,lote){
-  let depBuscado = String(dep || '').trim();
-
+  let depBuscado=String(dep||'').trim();
   if(!depBuscado) return null;
-
-  let listaMismoLote = ANALITICAS.filter(function(a){
-    return String(a.dep || '').trim() === depBuscado && perteneceLote(a,lote);
+  let listaMismoLote=ANALITICAS.filter(function(a){
+    return String(a.dep||'').trim()===depBuscado&&perteneceLote(a,lote);
   });
-
-  let encontrada = ordenarFechaDesc(listaMismoLote)[0] || null;
-
-  if(encontrada){
-    return encontrada;
-  }
-
-  let listaSoloDeposito = ANALITICAS.filter(function(a){
-    return String(a.dep || '').trim() === depBuscado;
-  });
-
-  return ordenarFechaDesc(listaSoloDeposito)[0] || null;
+  let encontrada=ordenarFechaDesc(listaMismoLote)[0]||null;
+  if(encontrada) return encontrada;
+  let listaSoloDeposito=ANALITICAS.filter(function(a){return String(a.dep||'').trim()===depBuscado;});
+  return ordenarFechaDesc(listaSoloDeposito)[0]||null;
 }
 
 function normalizarSiNo(x){
-  let t = normalizarTexto(x || '').trim();
-  return t === 'SI' || t === 'SÍ' || t === 'TRUE' || t === 'VERDADERO' || t === '1';
+  let t=normalizarTexto(x||'').trim();
+  return t==='SI'||t==='SÍ'||t==='TRUE'||t==='VERDADERO'||t==='1';
 }
-
-function fechaComparable(f){
-  return String(f || '').trim();
-}
-
+function fechaComparable(f){return String(f||'').trim();}
 function numeroParecido(a,b){
-  a = Math.abs(Number(String(a || '0').replace(/\./g,'').replace(',','.')));
-  b = Math.abs(Number(String(b || '0').replace(/\./g,'').replace(',','.')));
-
-  if(isNaN(a) || isNaN(b)) return false;
-
-  return Math.abs(a - b) <= 1;
+  a=Math.abs(Number(String(a||'0').replace(/\./g,'').replace(',','.')));
+  b=Math.abs(Number(String(b||'0').replace(/\./g,'').replace(',','.')));
+  if(isNaN(a)||isNaN(b)) return false;
+  return Math.abs(a-b)<=1;
 }
 
-function buscarAvisoRemanente(depDestino, depOrigen, fecha, litros, loteActual){
-  depDestino = normalizarDep(depDestino);
-  depOrigen = normalizarDep(depOrigen);
-  fecha = fechaComparable(fecha);
-
-  let candidatos = AUDIT_REMANENTES.filter(function(a){
-    let d = normalizarDep(
-      campo(a,['dep_destino','Dep_Destino','Dep_Desti','destino','Destino']) ||
-      campoDetalle(a,['Dep_Destino','Dep Destino','Destino'])
-    );
-
-    if(d !== depDestino) return false;
-
-    let bloquea =
-      campo(a,['bloquear_herencia_analitica','Bloquear_Herencia_Analitica']) ||
-      campoDetalle(a,['Bloquear_Herencia_Analitica','Bloquear Herencia Analitica']);
-
-    let mezcla =
-      campo(a,['mezcla_con_remanente','Mezcla_Con_Remanente']) ||
-      campoDetalle(a,['Mezcla_Con_Remanente','Mezcla Con Remanente']);
-
-    if(!normalizarSiNo(bloquea) && !normalizarSiNo(mezcla)) return false;
-
-    let f = fechaComparable(campo(a,['fecha','Fecha']) || campoDetalle(a,['Fecha']));
-
-    if(fecha && f && f !== fecha) return false;
-
-    let o = normalizarDep(
-      campo(a,['dep_origen','Dep_Origen','Dep_Orig','origen','Origen']) ||
-      campoDetalle(a,['Dep_Origen','Dep Origen','Origen'])
-    );
-
-    if(depOrigen && o && o !== depOrigen) return false;
-
-    let litrosAudit =
-      campo(a,['litros_entrada','Litros_Entrada','volumen_l','Volumen_L']) ||
-      campoDetalle(a,['Litros_Entrada','Litros Entrada','Volumen_L','Volumen']);
-
-    if(litros && litrosAudit && !numeroParecido(litrosAudit, litros)) return false;
-
+function buscarAvisoRemanente(depDestino,depOrigen,fecha,litros,loteActual){
+  depDestino=normalizarDep(depDestino); depOrigen=normalizarDep(depOrigen); fecha=fechaComparable(fecha);
+  let candidatos=AUDIT_REMANENTES.filter(function(a){
+    let d=normalizarDep(campo(a,['dep_destino','Dep_Destino','Dep_Desti','destino','Destino'])||
+                          campoDetalle(a,['Dep_Destino','Dep Destino','Destino']));
+    if(d!==depDestino) return false;
+    let bloquea=campo(a,['bloquear_herencia_analitica','Bloquear_Herencia_Analitica'])||
+                campoDetalle(a,['Bloquear_Herencia_Analitica','Bloquear Herencia Analitica']);
+    let mezcla=campo(a,['mezcla_con_remanente','Mezcla_Con_Remanente'])||
+               campoDetalle(a,['Mezcla_Con_Remanente','Mezcla Con Remanente']);
+    if(!normalizarSiNo(bloquea)&&!normalizarSiNo(mezcla)) return false;
+    let f=fechaComparable(campo(a,['fecha','Fecha'])||campoDetalle(a,['Fecha']));
+    if(fecha&&f&&f!==fecha) return false;
+    let o=normalizarDep(campo(a,['dep_origen','Dep_Origen','Dep_Orig','origen','Origen'])||
+                        campoDetalle(a,['Dep_Origen','Dep Origen','Origen']));
+    if(depOrigen&&o&&o!==depOrigen) return false;
+    let litrosAudit=campo(a,['litros_entrada','Litros_Entrada','volumen_l','Volumen_L'])||
+                    campoDetalle(a,['Litros_Entrada','Litros Entrada','Volumen_L','Volumen']);
+    if(litros&&litrosAudit&&!numeroParecido(litrosAudit,litros)) return false;
     return true;
   });
-
-  if(candidatos.length === 0){
-    return null;
-  }
-
-  return candidatos[0];
+  return candidatos.length?candidatos[0]:null;
 }
 
 function textoAvisoRemanente(a){
   if(!a) return '';
-
-  let depD =
-    campo(a,['dep_destino','Dep_Destino','Dep_Desti','destino','Destino']) ||
-    campoDetalle(a,['Dep_Destino','Dep Destino','Destino']);
-
-  let depO =
-    campo(a,['dep_origen','Dep_Origen','Dep_Orig','origen','Origen']) ||
-    campoDetalle(a,['Dep_Origen','Dep Origen','Origen']);
-
-  let litrosEntrada =
-    campo(a,['litros_entrada','Litros_Entrada','volumen_l','Volumen_L']) ||
-    campoDetalle(a,['Litros_Entrada','Litros Entrada','Volumen_L','Volumen']);
-
-  let volAntes =
-    campo(a,['vol_destino_antes_l','Vol_Destino_Antes_L','vol_destino_antes','Vol_Destino_Antes']) ||
-    campoDetalle(a,['Vol_Destino_Antes_L','Vol Destino Antes L','Vol_Destino_Antes']);
-
-  let loteAntes =
-    campo(a,['lote_destino_antes','Lote_Destino_Antes','lote_destino_ant','Lote_Destino_Ant']) ||
-    campoDetalle(a,['Lote_Destino_Antes','Lote Destino Antes']);
-
-  let tipoAntes =
-    campo(a,['tipo_destino_antes','Tipo_Destino_Antes']) ||
-    campoDetalle(a,['Tipo_Destino_Antes','Tipo Destino Antes']);
-
-  let nota =
-    campo(a,['nota_arbol_visor','Nota_Arbol_Visor','motivo','Motivo']) ||
-    campoDetalle(a,['Nota_Arbol_Visor','Motivo']);
-
-  let partes = [];
-
-  partes.push('MEZCLA CON REMANENTE EN DESTINO');
-
-  if(depD || volAntes){
-    partes.push((depD || 'El destino') + ' ya tenía ' + (volAntes || '?') + ' L antes de recibir vino');
-  }
-
-  if(depO || litrosEntrada){
-    partes.push('Entrada desde ' + (depO || '?') + ': ' + (litrosEntrada || '?') + ' L');
-  }
-
-  if(loteAntes){
-    partes.push('Lote previo en destino: ' + loteAntes);
-  }
-
-  if(tipoAntes){
-    partes.push('Tipo previo en destino: ' + tipoAntes);
-  }
-
+  let depD=campo(a,['dep_destino','Dep_Destino','Dep_Desti','destino','Destino'])||
+           campoDetalle(a,['Dep_Destino','Dep Destino','Destino']);
+  let depO=campo(a,['dep_origen','Dep_Origen','Dep_Orig','origen','Origen'])||
+           campoDetalle(a,['Dep_Origen','Dep Origen','Origen']);
+  let litrosEntrada=campo(a,['litros_entrada','Litros_Entrada','volumen_l','Volumen_L'])||
+                    campoDetalle(a,['Litros_Entrada','Litros Entrada','Volumen_L','Volumen']);
+  let volAntes=campo(a,['vol_destino_antes_l','Vol_Destino_Antes_L','vol_destino_antes','Vol_Destino_Antes'])||
+               campoDetalle(a,['Vol_Destino_Antes_L','Vol Destino Antes L','Vol_Destino_Antes']);
+  let loteAntes=campo(a,['lote_destino_antes','Lote_Destino_Antes','lote_destino_ant','Lote_Destino_Ant'])||
+                campoDetalle(a,['Lote_Destino_Antes','Lote Destino Antes']);
+  let tipoAntes=campo(a,['tipo_destino_antes','Tipo_Destino_Antes'])||
+                campoDetalle(a,['Tipo_Destino_Antes','Tipo Destino Antes']);
+  let nota=campo(a,['nota_arbol_visor','Nota_Arbol_Visor','motivo','Motivo'])||
+           campoDetalle(a,['Nota_Arbol_Visor','Motivo']);
+  let partes=['MEZCLA CON REMANENTE EN DESTINO'];
+  if(depD||volAntes) partes.push((depD||'El destino')+' ya tenía '+(volAntes||'?')+' L antes de recibir vino');
+  if(depO||litrosEntrada) partes.push('Entrada desde '+(depO||'?')+': '+(litrosEntrada||'?')+' L');
+  if(loteAntes) partes.push('Lote previo en destino: '+loteAntes);
+  if(tipoAntes) partes.push('Tipo previo en destino: '+tipoAntes);
   partes.push('NO heredar analítica automáticamente');
-
-  if(nota){
-    partes.push(nota);
-  }
-
+  if(nota) partes.push(nota);
   return partes.join(' | ');
 }
 
 function avisosRemanenteNodo(dep,lote,ev){
-  let depBuscado = normalizarDep(dep);
-  let avisos = [];
-  let vistos = {};
-
-  (ev.entradas || []).forEach(function(m){
-    let origen = origenMovimiento(m);
-    let destino = destinoMovimiento(m);
-
-    if(destino && destino !== depBuscado) return;
-
-    let fechaM = String(m.fecha || '').trim();
-    let litrosM = Math.abs(litrosMovimiento(m));
-
-    let aviso = buscarAvisoRemanente(depBuscado, origen, fechaM, litrosM, lote);
-
+  let depBuscado=normalizarDep(dep),avisos=[],vistos={};
+  (ev.entradas||[]).forEach(function(m){
+    let origen=origenMovimiento(m),destino=destinoMovimiento(m);
+    if(destino&&destino!==depBuscado) return;
+    let fechaM=String(m.fecha||'').trim(),litrosM=Math.abs(litrosMovimiento(m));
+    let aviso=buscarAvisoRemanente(depBuscado,origen,fechaM,litrosM,lote);
     if(!aviso) return;
-
-    let clave = [
-      campo(aviso,['fecha','Fecha']),
-      campo(aviso,['fila_trasiego','Fila_Trasiego']),
-      campo(aviso,['dep_origen','Dep_Origen']),
-      campo(aviso,['dep_destino','Dep_Destino']),
+    let clave=[
+      campo(aviso,['fecha','Fecha']),campo(aviso,['fila_trasiego','Fila_Trasiego']),
+      campo(aviso,['dep_origen','Dep_Origen']),campo(aviso,['dep_destino','Dep_Destino']),
       campo(aviso,['litros_entrada','Litros_Entrada'])
     ].join('|');
-
     if(vistos[clave]) return;
-
-    vistos[clave] = true;
-    avisos.push({
-      fecha: campo(aviso,['fecha','Fecha']) || fechaM,
-      detalle: textoAvisoRemanente(aviso)
-    });
+    vistos[clave]=true;
+    avisos.push({fecha:campo(aviso,['fecha','Fecha'])||fechaM,detalle:textoAvisoRemanente(aviso)});
   });
-
   return avisos;
 }
 
+
 function tieneBloqueoHerenciaPorRemanente(dep,lote,ev){
-  let depBuscado = normalizarDep(dep);
+  let depBuscado=normalizarDep(dep);
+  let entradas=(ev&&ev.entradas)?ev.entradas:[];
 
-  let entradas = (ev && ev.entradas) ? ev.entradas : [];
+  for(let i=0;i<entradas.length;i++){
+    let m=entradas[i];
+    let origen=origenMovimiento(m);
+    let destino=destinoMovimiento(m);
 
-  for(let i = 0; i < entradas.length; i++){
-    let m = entradas[i];
+    if(destino&&destino!==depBuscado) continue;
 
-    let origen = origenMovimiento(m);
-    let destino = destinoMovimiento(m);
+    let fechaM=String(m.fecha||'').trim();
+    let litrosM=Math.abs(litrosMovimiento(m));
 
-    if(destino && destino !== depBuscado) continue;
-
-    let fechaM = String(m.fecha || '').trim();
-    let litrosM = Math.abs(litrosMovimiento(m));
-
-    let aviso = buscarAvisoRemanente(depBuscado, origen, fechaM, litrosM, lote);
-
-    if(aviso){
-      return true;
-    }
+    let aviso=buscarAvisoRemanente(depBuscado,origen,fechaM,litrosM,lote);
+    if(aviso) return true;
   }
 
   return false;
 }
 
 function loteResultanteMovimiento(m){
-  return campo(m,[
-    'lote_resultante',
-    'Lote_Resultante',
-    'lote_resultante_fila',
-    'Lote_Resultante_Fila'
-  ]) || campoDetalle(m,[
-    'Lote_Resultante',
-    'Lote Resultante',
-    'Lote_Resultante_Fila',
-    'Lote Resultante Fila'
-  ]);
+  return campo(m,['lote_resultante','Lote_Resultante','lote_resultante_fila','Lote_Resultante_Fila'])||
+         campoDetalle(m,['Lote_Resultante','Lote Resultante','Lote_Resultante_Fila','Lote Resultante Fila']);
 }
 
-function trasiegoPermiteHeredarAnalitica(m, dep, loteActual){
-  let origen = String(m.origen || '').trim();
+function trasiegoPermiteHeredarAnalitica(m,dep,loteActual){
+  let origen=String(m.origen||'').trim();
+  if(!origen||origen===String(dep||'').trim()) return false;
+  let loteOrigen=loteOrigenMovimiento(m,loteActual);
+  let loteResultante=loteResultanteMovimiento(m);
+  if(loteOrigen&&loteActual&&String(loteOrigen)!==String(loteActual)) return false;
+  if(loteResultante&&loteActual&&String(loteResultante)!==String(loteActual)) return false;
 
-  if(!origen) return false;
-  if(origen === String(dep || '').trim()) return false;
-
-  let loteOrigen = loteOrigenMovimiento(m,loteActual);
-  let loteResultante = loteResultanteMovimiento(m);
-
-  // Regla principal:
-  // si el lote origen no es el mismo que el lote actual, NO se hereda analítica.
-  if(loteOrigen && loteActual && String(loteOrigen) !== String(loteActual)){
-    return false;
-  }
-
-  // Si la fila trae lote resultante y no coincide con el lote actual, tampoco.
-  if(loteResultante && loteActual && String(loteResultante) !== String(loteActual)){
-    return false;
-  }
-
-  // Si M40 dice que hay remanente o mezcla, NO se hereda.
-  let depBuscado = normalizarDep(dep);
-  let origenBuscado = origenMovimiento(m);
-  let destinoBuscado = destinoMovimiento(m);
-  let fechaM = String(m.fecha || '').trim();
-  let litrosM = Math.abs(litrosMovimiento(m));
-
-  if(destinoBuscado && destinoBuscado !== depBuscado){
-    return false;
-  }
-
-  let aviso = buscarAvisoRemanente(depBuscado, origenBuscado, fechaM, litrosM, loteActual);
-
-  if(aviso){
-    return false;
-  }
-
-  return true;
+  let depBuscado=normalizarDep(dep),origenBuscado=origenMovimiento(m),destinoBuscado=destinoMovimiento(m);
+  let fechaM=String(m.fecha||'').trim(),litrosM=Math.abs(litrosMovimiento(m));
+  if(destinoBuscado&&destinoBuscado!==depBuscado) return false;
+  return !buscarAvisoRemanente(depBuscado,origenBuscado,fechaM,litrosM,loteActual);
 }
 
 function analiticasConDepositoAnterior(dep,lote,ev){
-  let anas = (ev.anas || []).slice();
-  let yaIncluidas = {};
+  let anas=(ev.anas||[]).slice(),yaIncluidas={};
+  anas.forEach(function(a){yaIncluidas[claveAnalitica(a)]=true;});
 
-  anas.forEach(function(a){
-    yaIncluidas[claveAnalitica(a)] = true;
-  });
-
-  (ev.entradas || []).forEach(function(m){
-
-    if(!trasiegoPermiteHeredarAnalitica(m, dep, lote)){
-      return;
-    }
-
-    let origen = String(m.origen || '').trim();
-    let loteAnterior = loteOrigenMovimiento(m,lote);
-
-    let anaAnterior =
-      ultimaAnaliticaDeDeposito(origen,loteAnterior) ||
-      ultimaAnaliticaDeDeposito(origen,lote) ||
-      ultimaAnaliticaDeDeposito(origen,'');
-
+  (ev.entradas||[]).forEach(function(m){
+    if(!trasiegoPermiteHeredarAnalitica(m,dep,lote)) return;
+    let origen=String(m.origen||'').trim();
+    let loteAnterior=loteOrigenMovimiento(m,lote);
+    let anaAnterior=ultimaAnaliticaDeDeposito(origen,loteAnterior)||
+                    ultimaAnaliticaDeDeposito(origen,lote)||
+                    ultimaAnaliticaDeDeposito(origen,'');
     if(!anaAnterior) return;
-
-    let claveOriginal = claveAnalitica(anaAnterior);
-
+    let claveOriginal=claveAnalitica(anaAnterior);
     if(yaIncluidas[claveOriginal]) return;
-
-    let copia = {};
-
-    for(let k in anaAnterior){
-      if(Object.prototype.hasOwnProperty.call(anaAnterior,k)){
-        copia[k] = anaAnterior[k];
-      }
-    }
-
-    copia.detalle =
-      'ANALÍTICA HEREDADA DEL DEPÓSITO ANTERIOR: ' + origen +
-      ' | Lote origen: ' + loteAnterior +
-      ' | ' +
-      (anaAnterior.detalle || '');
-
-    copia.es_heredada = true;
-
-    yaIncluidas[claveOriginal] = true;
+    let copia={};
+    for(let k in anaAnterior) if(Object.prototype.hasOwnProperty.call(anaAnterior,k)) copia[k]=anaAnterior[k];
+    copia.detalle='ANALÍTICA HEREDADA DEL DEPÓSITO ANTERIOR: '+origen+
+      ' | Lote origen: '+loteAnterior+' | '+(anaAnterior.detalle||'');
+    copia.es_heredada=true;
+    yaIncluidas[claveOriginal]=true;
     anas.push(copia);
   });
 
   return anas;
 }
+
 function construirArbol(dep,lote,nivel,visitados){
-  let clave = dep + '|' + lote;
+  let clave=dep+'|'+lote;
+  if(visitados[clave]) return '<div class="item mov">↳ '+esc(dep)+' / '+esc(lote)+' ya visitado</div>';
+  visitados[clave]=true;
 
-  if(visitados[clave]){
-    return '<div class="item mov">↳ '+esc(dep)+' / '+esc(lote)+' ya visitado</div>';
+  let ev=eventosNodo(dep,lote);
+  let avisosRemanente=avisosRemanenteNodo(dep,lote,ev);
+  let anasVisor=analiticasConDepositoAnterior(dep,lote,ev);
+  let abierto=nivel===0?' open':'';
+
+  let html='<details class="box"'+abierto+'><summary>'+('&nbsp;&nbsp;'.repeat(nivel))+
+    'DEPÓSITO '+esc(dep)+' | Lote '+esc(lote||'-')+'</summary>';
+
+  html+=bloque('Entradas',pintarLista(ev.entradas,'mov'));
+  if(avisosRemanente.length>0) html+=bloque('Mezclas con remanente / avisos',pintarLista(avisosRemanente,'warnitem'));
+  html+=bloque('Salidas',pintarLista(ev.salidas,'mov'));
+  html+=bloque('Adiciones',pintarLista(ev.adis,'adi'));
+  html+=bloque('Analíticas',pintarLista(anasVisor,'ana'));
+
+  let padres=ev.entradas.filter(function(x){return x.origen&&x.origen!==dep;})
+    .map(function(x){return {dep:x.origen,lote:loteOrigenMovimiento(x,lote)};});
+  let unicos={};
+  padres.forEach(function(p){unicos[p.dep+'|'+p.lote]=p;});
+  let listaPadres=Object.values(unicos);
+
+  if(listaPadres.length>0){
+    html+='<details class="box"><summary>Padres anteriores</summary>';
+    listaPadres.forEach(function(p){html+=construirArbol(p.dep,p.lote,nivel+1,visitados);});
+    html+='</details>';
   }
 
-  visitados[clave] = true;
-
-  let ev = eventosNodo(dep,lote);
-  let avisosRemanente = avisosRemanenteNodo(dep,lote,ev);
-  let anasVisor = analiticasConDepositoAnterior(dep,lote,ev);
-
-  let abierto = nivel === 0 ? ' open' : '';
-
-  let html = '<details class="box"' + abierto + '>' +
-    '<summary>'+('&nbsp;&nbsp;'.repeat(nivel))+'DEPÓSITO '+esc(dep)+' | Lote '+esc(lote || '-')+'</summary>';
-
-  html += bloque('Entradas', pintarLista(ev.entradas,'mov'));
-
-  if(avisosRemanente.length > 0){
-    html += bloque('Mezclas con remanente / avisos', pintarLista(avisosRemanente,'warnitem'));
-  }
-
-  html += bloque('Salidas', pintarLista(ev.salidas,'mov'));
-  html += bloque('Adiciones', pintarLista(ev.adis,'adi'));
-  html += bloque('Analíticas', pintarLista(anasVisor,'ana'));
-
-  let padres = ev.entradas
-    .filter(x => x.origen && x.origen !== dep)
-    .map(x => ({
-      dep:x.origen,
-      lote:loteOrigenMovimiento(x,lote)
-    }));
-
-  let unicos = {};
-  padres.forEach(p => unicos[p.dep + '|' + p.lote] = p);
-
-  let listaPadres = Object.values(unicos);
-
-  if(listaPadres.length > 0){
-    html += '<details class="box"><summary>Padres anteriores</summary>';
-
-    listaPadres.forEach(p => {
-      html += construirArbol(p.dep,p.lote,nivel+1,visitados);
-    });
-
-    html += '</details>';
-  }
-
-  html += '</details>';
-
+  html+='</details>';
   return html;
 }
 
-
-function fechaOrden(x){
-  return valorFecha((x && (x.fecha || x.fecha_registro || x.Fecha)) || '');
-}
+function fechaOrden(x){return valorFecha((x&&(x.fecha||x.fecha_registro||x.Fecha))||'');}
 
 function ultimoRegistroLimpieza(dep){
   let buscado=normalizarDep(dep);
-  return (LIMPIEZAS_DEPOSITOS || [])
-    .filter(function(x){return normalizarDep(x.dep || x.deposito)===buscado;})
-    .sort(function(a,b){return fechaOrden(b)-fechaOrden(a);})[0] || null;
+  return (LIMPIEZAS_DEPOSITOS||[])
+    .filter(function(x){return normalizarDep(x.dep||x.deposito)===buscado;})
+    .sort(function(a,b){return fechaOrden(b)-fechaOrden(a);})[0]||null;
 }
 
 function ultimoContenidoDeposito(dep,d){
@@ -1577,526 +1309,162 @@ function ultimoContenidoDeposito(dep,d){
     let tipo=campo(reg,['ultimo_contenido','contenido_anterior','tipo_vino','Tipo_Vino']);
     let lote=campo(reg,['lote_anterior','Lote_Anterior','lote','Lote']);
     let volumen=campo(reg,['volumen','Volumen','volumen_anterior','Volumen_Anterior']);
-    if(tipo || lote || volumen){
-      return {tipo:tipo,lote:lote,volumen:volumen,fecha:reg.fecha || '',origen:'limpieza'};
-    }
+    if(tipo||lote||volumen) return {tipo:tipo,lote:lote,volumen:volumen,fecha:reg.fecha||'',origen:'limpieza'};
   }
 
-  let actual=String((d && d.lote) || '');
-  let candidatos=(MOVIMIENTOS || []).filter(function(x){
+  let actual=String((d&&d.lote)||'');
+  let candidatos=(MOVIMIENTOS||[]).filter(function(x){
     let o=origenMovimiento(x);
     if(o!==normalizarDep(dep)) return false;
     let l=loteOrigenMovimiento(x,actual);
-    return !actual || !l || String(l)!==actual;
+    return !actual||!l||String(l)!==actual;
   });
-  let mov=ordenarFechaDesc(candidatos)[0] || null;
+  let mov=ordenarFechaDesc(candidatos)[0]||null;
   if(!mov) return null;
   return {
-    tipo:campo(mov,['tipo_vino','Tipo_Vino']) || campoDetalle(mov,['Tipo_Origen_Momento','Tipo Vino']),
+    tipo:campo(mov,['tipo_vino','Tipo_Vino'])||campoDetalle(mov,['Tipo_Origen_Momento','Tipo Vino']),
     lote:loteOrigenMovimiento(mov,actual),
-    volumen:Math.abs(litrosMovimiento(mov)) || '',
-    fecha:mov.fecha || '',
-    origen:'movimiento'
+    volumen:Math.abs(litrosMovimiento(mov))||'',
+    fecha:mov.fecha||'',origen:'movimiento'
   };
 }
 
 function fichaUltimoContenido(dep,d){
   let u=ultimoContenidoDeposito(dep,d);
   if(!u) return '<div class="vacio">Sin contenido anterior localizado.</div>';
-  let vol=String(u.volumen || '').trim();
-  if(vol && !isNaN(Number(String(vol).replace(/\./g,'').replace(',','.')))){
+  let vol=String(u.volumen||'').trim();
+  if(vol&&!isNaN(Number(String(vol).replace(/\./g,'').replace(',','.')))){
     vol=fmt(Number(String(vol).replace(/\./g,'').replace(',','.')))+' L';
   }
   return '<div class="historial-resumen"><div class="hist-card">'+
-    '<b>Producto anterior:</b> '+esc(u.tipo || '-')+'<br>'+
-    '<b>Lote anterior:</b> '+esc(u.lote || '-')+'<br>'+
-    '<b>Volumen:</b> '+esc(vol || '-')+'<br>'+
-    '<b>Fecha de vaciado/registro:</b> '+esc(u.fecha || '-')+
+    '<b>Producto anterior:</b> '+esc(u.tipo||'-')+'<br>'+
+    '<b>Lote anterior:</b> '+esc(u.lote||'-')+'<br>'+
+    '<b>Volumen:</b> '+esc(vol||'-')+'<br>'+
+    '<b>Fecha de vaciado/registro:</b> '+esc(u.fecha||'-')+
     '</div></div>';
 }
 
 function fichaHigieneSimplificada(dep,d){
   let h=higieneDep(dep,d);
-  let hist=(LIMPIEZAS_DEPOSITOS || []).filter(function(x){
-    return normalizarDep(x.dep || x.deposito)===normalizarDep(dep);
+  let hist=(LIMPIEZAS_DEPOSITOS||[]).filter(function(x){
+    return normalizarDep(x.dep||x.deposito)===normalizarDep(dep);
   });
-  let actual=h ? '<div class="hist-card">'+
-    '<b>Estado:</b> '+esc(h.estado || h.texto || '-')+'<br>'+
-    '<b>Última limpieza:</b> '+esc(h.tipo_limpieza || '-')+'<br>'+
-    '<b>Fecha:</b> '+esc(h.fecha || '-')+'<br>'+
-    '<b>Realizado por:</b> '+esc(h.realizado_por || h.operario || '-')+'<br>'+
-    '<b>Registrado por:</b> '+esc(h.registrado_por || '-')+'<br>'+
-    '<b>Apto para:</b> '+esc(h.apto_para || h.aptitud || '-')+'<br>'+
-    '<b>Observaciones:</b> '+esc(h.observaciones || h.incidencia || '-')+
-    '</div>' : '<div class="vacio">Sin estado de higiene registrado.</div>';
+  let actual=h?'<div class="hist-card">'+
+    '<b>Estado:</b> '+esc(h.estado||h.texto||'-')+'<br>'+
+    '<b>Última limpieza:</b> '+esc(h.tipo_limpieza||'-')+'<br>'+
+    '<b>Fecha:</b> '+esc(h.fecha||'-')+'<br>'+
+    '<b>Realizado por:</b> '+esc(h.realizado_por||h.operario||'-')+'<br>'+
+    '<b>Registrado por:</b> '+esc(h.registrado_por||'-')+'<br>'+
+    '<b>Apto para:</b> '+esc(h.apto_para||h.aptitud||'-')+'<br>'+
+    '<b>Observaciones:</b> '+esc(h.observaciones||h.incidencia||'-')+
+    '</div>':'<div class="vacio">Sin estado de higiene registrado.</div>';
   return '<div class="historial-resumen">'+actual+'</div>'+bloque('Historial de higiene',pintarLista(hist,'hig'));
 }
 
 function bloqueHistorialDeposito(dep,d){
-  let contenido='';
-  contenido += bloque('Último contenido',fichaUltimoContenido(dep,d));
-  contenido += bloque('Higiene',fichaHigieneSimplificada(dep,d));
-  return bloque('Historial del depósito',contenido);
+  return bloque('Historial del depósito',
+    bloque('Último contenido',fichaUltimoContenido(dep,d))+
+    bloque('Higiene',fichaHigieneSimplificada(dep,d))
+  );
 }
 
-function procesoPorDeposito(dep,lote){
-  let procesos=(FERMENTACIONES && Array.isArray(FERMENTACIONES.procesos)) ? FERMENTACIONES.procesos : [];
-  let exactos=procesos.filter(function(p){
-    return normalizarDep(p.deposito_actual)===normalizarDep(dep) && (!lote || String(p.lote_actual || '')===String(lote));
-  });
-  exactos.sort(function(a,b){
-    let ea=normalizarTexto(a.estado)==='ACTIVO' ? 1 : 0;
-    let eb=normalizarTexto(b.estado)==='ACTIVO' ? 1 : 0;
-    if(eb!==ea) return eb-ea;
-    return valorFecha(b.fecha_inicio)-valorFecha(a.fecha_inicio);
-  });
-  if(exactos[0]) return exactos[0];
-
-  let diario=(FERMENTACIONES && Array.isArray(FERMENTACIONES.diario)) ? FERMENTACIONES.diario : [];
-  let lect=diario.filter(function(x){
-    return normalizarDep(x.deposito)===normalizarDep(dep) && (!lote || String(x.lote || '')===String(lote));
-  }).sort(function(a,b){return valorFecha(b.fecha)-valorFecha(a.fecha);})[0];
-  if(!lect) return null;
-  return procesos.filter(function(p){return String(p.id)===String(lect.proceso_id);})[0] || {id:lect.proceso_id,deposito_actual:dep,lote_actual:lote};
-}
-
-function lecturasProceso(id){
-  return ((FERMENTACIONES && FERMENTACIONES.diario) || [])
-    .filter(function(x){return String(x.proceso_id || '')===String(id || '');})
-    .sort(function(a,b){return valorFecha(a.fecha)-valorFecha(b.fecha);});
-}
-function lecturasGraficoProceso(id){
-  let raw = lecturasProceso(id);
-  let porDia = {};
-  let claves = [];
-
-  raw.forEach(function(x,indice){
-    let fecha = String(x.fecha || '').trim();
-    let clave = fecha || ('SIN_FECHA_'+indice);
-
-    if(!porDia[clave]){
-      porDia[clave] = Object.assign({},x,{__indice:indice});
-      claves.push(clave);
-    }else{
-      let d = porDia[clave];
-
-      /* Igual que la tabla diaria del Excel: conserva la última lectura válida del día */
-      if(numeroFerm(x.densidad) !== null) d.densidad = x.densidad;
-      if(numeroFerm(x.temperatura) !== null) d.temperatura = x.temperatura;
-
-      if(x.descube_estado) d.descube_estado = x.descube_estado;
-      if(x.litros_descubados) d.litros_descubados = x.litros_descubados;
-      if(x.merma_descube) d.merma_descube = x.merma_descube;
-    }
-  });
-
-  return claves.map(function(k){ return porDia[k]; })
-    .sort(function(a,b){
-      let fa = valorFecha(a.fecha);
-      let fb = valorFecha(b.fecha);
-      if(fa !== fb) return fa-fb;
-      return (a.__indice || 0) - (b.__indice || 0);
-    });
-}
-
-
-  function numeroFerm(v){
-  if(v === null || v === undefined || String(v).trim() === '') return null;
-
-  if(typeof v === 'number'){
-    return Number.isFinite(v) ? v : null;
-  }
-
-  let s = String(v).trim().replace(/\s/g,'');
-
-  if(s.includes(',') && s.includes('.')){
-    if(s.lastIndexOf(',') > s.lastIndexOf('.')){
-      s = s.replace(/\./g,'').replace(',','.');
-    }else{
-      s = s.replace(/,/g,'');
-    }
-  }else if(s.includes(',')){
-    s = s.replace(',','.');
-  }
-
-  let n = Number(s);
-
-  /* Compatibilidad si Excel exportase una densidad como "1.094" */
-  if(!isNaN(n) && n > 0 && n < 10 && /^\d{1,3}\.\d{3}$/.test(s)){
-    n = Number(s.replace('.',''));
-  }
-
-  return isNaN(n) ? null : n;
-}
-
-
-
- function svgGraficoFermentacion(proceso,modo){
-
-  /* Para el gráfico usamos UNA lectura consolidada por día,
-     exactamente como la tabla/gráfico de Excel. */
-  let lect = lecturasGraficoProceso(proceso.id);
-
-  if(!lect.length){
-    return '<div class="ferm-sin">El proceso existe, pero todavía no tiene lecturas de densidad o temperatura.</div>';
-  }
-
-  let dens = lect.map(function(x){ return numeroFerm(x.densidad); });
-  let temp = lect.map(function(x){ return numeroFerm(x.temperatura); });
-
-  let hayDens = dens.some(function(x){ return x !== null; });
-  let hayTemp = temp.some(function(x){ return x !== null; });
-
-  if(!hayDens && !hayTemp){
-    return '<div class="ferm-sin">Sin lecturas numéricas para representar.</div>';
-  }
-
-  if(modo === 'densidad' && !hayDens) modo = 'temperatura';
-  if(modo === 'temperatura' && !hayTemp) modo = 'densidad';
-
-  let W = Math.max(650, lect.length * 135);
-  let H = 370;
-  let ML = 72;
-  let MR = 62;
-  let TOP = 54;
-  let BOTTOM = 48;
-  let GRAF_H = H - TOP - BOTTOM;
-
-  let xs = lect.map(function(_,i){
-    if(lect.length === 1) return (ML + (W-MR))/2;
-    return ML + i*((W-MR)-ML)/(lect.length-1);
-  });
-
-  let dvals = dens.filter(function(x){ return x !== null; });
-  let tvals = temp.filter(function(x){ return x !== null; });
-
-  let dmin = dvals.length ? Math.min.apply(null,dvals) : 0;
-  let dmax = dvals.length ? Math.max.apply(null,dvals) : 1;
-  let tmin = tvals.length ? Math.min.apply(null,tvals) : 0;
-  let tmax = tvals.length ? Math.max.apply(null,tvals) : 1;
-
-  /* Escalas como Excel: densidad en saltos de 20 con margen inferior;
-     temperatura en saltos de 1 ºC con margen. */
-  let dPaso = 20;
-  let dAxisMin = Math.floor(dmin/dPaso)*dPaso - dPaso;
-  let dAxisMax = Math.ceil(dmax/dPaso)*dPaso;
-  if(dAxisMax <= dAxisMin) dAxisMax = dAxisMin + dPaso*2;
-
-  let tPaso = 1;
-  let tAxisMin = Math.floor(tmin) - 2;
-  let tAxisMax = Math.ceil(tmax) + 1;
-  if(tAxisMax <= tAxisMin) tAxisMax = tAxisMin + 2;
-
-  function yD(v){
-    return TOP + (dAxisMax-v)/(dAxisMax-dAxisMin)*GRAF_H;
-  }
-
-  function yT(v){
-    return TOP + (tAxisMax-v)/(tAxisMax-tAxisMin)*GRAF_H;
-  }
-
-  function path(vals,fnY){
-    let partes = [];
-    vals.forEach(function(v,i){
-      if(v === null) return;
-      partes.push((partes.length ? 'L' : 'M')+xs[i].toFixed(1)+' '+fnY(v).toFixed(1));
-    });
-    return partes.join(' ');
-  }
-
-  function adicionesDelProceso(){
-    let dep = normalizarDep(
-      proceso.deposito_actual ||
-      (lect[0] && lect[0].deposito) ||
-      ''
-    );
-
-    let lote = String(
-      proceso.lote_actual ||
-      (lect[0] && lect[0].lote) ||
-      ''
-    ).trim();
-
-    let fIni = valorFecha(proceso.fecha_inicio || '');
-    let fFin = valorFecha(proceso.fecha_fin || '');
-
-    return (ADICIONES || []).filter(function(a){
-      if(normalizarDep(a.dep || a.deposito || '') !== dep) return false;
-
-      let loteAdi =
-        campo(a,['lote','Lote','lote_resultante','lote_origen']) ||
-        campoDetalle(a,['Lote_Int_Momento','Lote Int Momento']);
-
-      if(lote && loteAdi && String(loteAdi).trim() !== lote) return false;
-
-      let fa = valorFecha(a.fecha || '');
-      if(fIni && fa && fa < fIni) return false;
-      if(fFin && fa && fa > fFin) return false;
-
-      return true;
-    }).sort(function(a,b){
-      return valorFecha(a.fecha)-valorFecha(b.fecha);
-    });
-  }
-
-  function textoAdicion(a){
-    let tipo = campoDetalle(a,['Tipo_Aditivo','Tipo Aditivo']);
-    let producto = campoDetalle(a,['Producto']);
-    let cantidad = campoDetalle(a,['Cantidad']);
-    let unidad = campoDetalle(a,['Unidad']);
-
-    let linea1 = [tipo,producto].filter(Boolean).join(': ') || 'ADICIÓN';
-    let linea2 = [cantidad,unidad].filter(Boolean).join(' ');
-
-    return {linea1:linea1,linea2:linea2};
-  }
-
-  let indiceFecha = {};
-  lect.forEach(function(x,i){
-    indiceFecha[String(x.fecha || '').trim()] = i;
-  });
-
-  let svg = '<div class="ferm-chart"><svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Gráfico de fermentación">';
-  svg += '<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="white"/>';
-
-  /* Rejilla horizontal: igual aspecto que Excel */
-  for(let g=0; g<=6; g++){
-    let y = TOP + g*GRAF_H/6;
-    svg += '<line x1="'+ML+'" y1="'+y+'" x2="'+(W-MR)+'" y2="'+y+'" stroke="#d9d9d9" stroke-width="1"/>';
-  }
-
-  /* Eje de densidad (izquierda) */
-  if((modo === 'densidad' || modo === 'ambas') && hayDens){
-    svg += '<line x1="'+ML+'" y1="'+TOP+'" x2="'+ML+'" y2="'+(H-BOTTOM)+'" stroke="#666"/>';
-
-    for(let v=dAxisMin; v<=dAxisMax+0.001; v+=dPaso){
-      let y = yD(v);
-      svg += '<text x="'+(ML-10)+'" y="'+(y+4)+'" text-anchor="end" font-size="11" fill="#333">'+Math.round(v)+'</text>';
-    }
-
-    svg += '<text x="18" y="'+(TOP+GRAF_H/2)+'" text-anchor="middle" font-size="11" font-weight="bold" fill="#333" transform="rotate(-90 18 '+(TOP+GRAF_H/2)+')">Densidad</text>';
-  }
-
-  /* Eje de temperatura (derecha), como el gráfico combinado de Excel */
-  if((modo === 'temperatura' || modo === 'ambas') && hayTemp){
-    svg += '<line x1="'+(W-MR)+'" y1="'+TOP+'" x2="'+(W-MR)+'" y2="'+(H-BOTTOM)+'" stroke="#666"/>';
-
-    for(let v=tAxisMin; v<=tAxisMax+0.001; v+=tPaso){
-      let y = yT(v);
-      svg += '<text x="'+(W-MR+10)+'" y="'+(y+4)+'" text-anchor="start" font-size="11" fill="#333">'+String(v).replace('.',',')+'</text>';
-    }
-
-    svg += '<text x="'+(W-16)+'" y="'+(TOP+GRAF_H/2)+'" text-anchor="middle" font-size="11" font-weight="bold" fill="#333" transform="rotate(-90 '+(W-16)+' '+(TOP+GRAF_H/2)+')">Temperatura</text>';
-  }
-
-  /* Eje X */
-  svg += '<line x1="'+ML+'" y1="'+(H-BOTTOM)+'" x2="'+(W-MR)+'" y2="'+(H-BOTTOM)+'" stroke="#666"/>';
-
-  lect.forEach(function(x,i){
-    let f = String(x.fecha || '');
-    svg += '<text x="'+xs[i]+'" y="'+(H-18)+'" text-anchor="middle" font-size="11" fill="#555">'+esc(f.substring(0,5))+'</text>';
-  });
-
-  /* DENSIDAD: azul, como Excel */
-  if((modo === 'densidad' || modo === 'ambas') && hayDens){
-    svg += '<path d="'+path(dens,yD)+'" fill="none" stroke="#4472C4" stroke-width="3"/>';
-
-    dens.forEach(function(v,i){
-      if(v === null) return;
-      let x = xs[i], y = yD(v);
-      svg += '<polygon points="'+x+','+(y-5)+' '+(x+5)+','+y+' '+x+','+(y+5)+' '+(x-5)+','+y+'" fill="#4472C4"><title>Densidad '+v+'</title></polygon>';
-    });
-  }
-
-  /* TEMPERATURA: roja continua con cuadrados, como Excel */
-  if((modo === 'temperatura' || modo === 'ambas') && hayTemp){
-    svg += '<path d="'+path(temp,yT)+'" fill="none" stroke="#C8463A" stroke-width="3"/>';
-
-    temp.forEach(function(v,i){
-      if(v === null) return;
-      let x = xs[i], y = yT(v);
-      svg += '<rect x="'+(x-4)+'" y="'+(y-4)+'" width="8" height="8" fill="#C8463A"><title>Temperatura '+String(v).replace('.',',')+' °C</title></rect>';
-    });
-  }
-
-  /* ADICIONES: sobre la densidad del mismo día, como en Excel */
-  if((modo === 'densidad' || modo === 'ambas') && hayDens){
-    let apiladas = {};
-
-    adicionesDelProceso().forEach(function(a){
-      let fecha = String(a.fecha || '').trim();
-      let idx = Object.prototype.hasOwnProperty.call(indiceFecha,fecha) ? indiceFecha[fecha] : -1;
-      if(idx < 0 || dens[idx] === null) return;
-
-      let x = xs[idx];
-      let y = yD(dens[idx]);
-      let nivel = apiladas[idx] || 0;
-      apiladas[idx] = nivel + 1;
-
-      let txt = textoAdicion(a);
-      let labelY = y - 18 - nivel*23;
-
-      /* Si falta espacio arriba, coloca la etiqueta debajo */
-      if(labelY < 25) labelY = y + 25 + nivel*23;
-
-      svg += '<polygon points="'+x+','+(y-6)+' '+(x+6)+','+y+' '+x+','+(y+6)+' '+(x-6)+','+y+'" fill="#C0504D"><title>'+esc((a.fecha || '')+' · '+txt.linea1+(txt.linea2?' · '+txt.linea2:''))+'</title></polygon>';
-      svg += '<text x="'+x+'" y="'+labelY+'" text-anchor="middle" font-size="9" fill="#222">'+esc(txt.linea1)+'</text>';
-
-      if(txt.linea2){
-        svg += '<text x="'+x+'" y="'+(labelY+11)+'" text-anchor="middle" font-size="9" fill="#222">'+esc(txt.linea2)+'</text>';
-      }
-    });
-  }
-
-  svg += '</svg></div>';
-  return svg;
-}
-function eventosFermentacion(proceso){
-  let eventos=[];
-  lecturasProceso(proceso.id).forEach(function(x){
-    if(x.adicion_producto || x.adicion_tipo || x.adicion_estado){
-      eventos.push('<div class="ferm-evento"><b>'+esc(x.fecha || '-')+' · Adición</b><br>'+esc([x.adicion_tipo,x.adicion_producto,x.adicion_cantidad].filter(Boolean).join(' · ') || x.adicion_estado)+'</div>');
-    }
-    if(x.descube_estado){
-      eventos.push('<div class="ferm-evento descube"><b>'+esc(x.fecha || '-')+' · Descube</b><br>'+esc([x.descube_estado,x.litros_descubados ? fmt(x.litros_descubados)+' L' : '',x.merma_descube ? 'Merma '+fmt(x.merma_descube)+' L' : ''].filter(Boolean).join(' · '))+'</div>');
-    }
-  });
-  return eventos.length?'<div class="ferm-eventos">'+eventos.join('')+'</div>':'';
-}
-
-function cambiarModoGrafico(id,modo){
-  MODO_GRAFICO_FERM[id]=modo;
-  let cont=document.getElementById('ferm_'+String(id).replace(/[^a-zA-Z0-9_-]/g,'_'));
-  if(cont){
-    let p=((FERMENTACIONES.procesos||[]).filter(function(x){return String(x.id)===String(id);})[0]) || {id:id};
-    cont.innerHTML=contenidoFermentacion(p);
-  }
-}
-
-function contenidoFermentacion(p){
-  let modo=MODO_GRAFICO_FERM[p.id] || 'ambas';
-  let sid=String(p.id || '').replace(/[^a-zA-Z0-9_-]/g,'_');
-  let html='<div class="ferm-panel">'+
-    '<div class="ferm-meta"><b>Proceso:</b> '+esc(p.id || '-')+'<br><b>Estado:</b> '+esc(p.estado || '-')+'<br><b>Inicio:</b> '+esc(p.fecha_inicio || '-')+'<br><b>Protocolo:</b> '+esc(p.protocolo || '-')+'</div>'+
-    '<div class="ferm-controls">'+
-      '<button class="'+(modo==='densidad'?'active':'')+'" onclick="cambiarModoGrafico(&quot;'+esc(p.id)+'&quot;,&quot;densidad&quot;)">Densidad</button>'+
-      '<button class="'+(modo==='temperatura'?'active':'')+'" onclick="cambiarModoGrafico(&quot;'+esc(p.id)+'&quot;,&quot;temperatura&quot;)">Temperatura</button>'+
-      '<button class="'+(modo==='ambas'?'active':'')+'" onclick="cambiarModoGrafico(&quot;'+esc(p.id)+'&quot;,&quot;ambas&quot;)">Ambas</button>'+
-    '</div>'+svgGraficoFermentacion(p,modo)+eventosFermentacion(p);
-  let padres=Array.isArray(p.padres)?p.padres:[];
-  if(padres.length){
-    html+=bloque('Fermentaciones de origen',padres.map(function(id){
-      let pp=(FERMENTACIONES.procesos||[]).filter(function(x){return String(x.id)===String(id);})[0];
-      return pp?'<details class="box"><summary>'+esc(pp.id)+'</summary>'+contenidoFermentacion(pp)+'</details>':'<div class="vacio">'+esc(id)+'</div>';
-    }).join(''));
-  }
-  html+='</div>';
-  return html;
-}
-
-function bloqueFermentacion(dep,lote){
-  let p=procesoPorDeposito(dep,lote);
-  if(!p) return '';
-  let sid=String(p.id || '').replace(/[^a-zA-Z0-9_-]/g,'_');
-  return '<details class="box" open><summary>Gráfica de fermentación</summary><div id="ferm_'+sid+'">'+contenidoFermentacion(p)+'</div></details>';
-}
 
 function fichaHigiene(dep,d){
-  let h = higieneDep(dep,d);
+  let h=higieneDep(dep,d);
 
   if(!h){
     return '<div class="ficha"><b>Limpieza / aptitud:</b> Sin datos</div>';
   }
 
-  let html = '<div class="ficha">' +
-    '<b>Limpieza / aptitud:</b> '+esc(h.estado || h.texto || '-')+'<br>' +
-    '<b>Fecha:</b> '+esc(h.fecha || '-')+'<br>' +
-    '<b>Necesita sosa:</b> '+esc(h.necesita_sosa || '-')+'<br>' +
-    '<b>Necesita desinfección:</b> '+esc(h.necesita_desinfeccion || '-')+'<br>' +
-    '<b>Apto tinto:</b> '+esc(h.apto_tinto || '-')+'<br>' +
-    '<b>Apto blanco/rosado:</b> '+esc(h.apto_blanco_rosado || '-')+'<br>' +
-    '<b>Tipo limpieza:</b> '+esc(h.tipo_limpieza || '-')+'<br>' +
-    '<b>Realizado por:</b> '+esc(h.realizado_por || '-')+'<br>' +
-    '<b>Incidencia:</b> '+esc(h.incidencia || '-')+'<br>' +
-    '<b>Observaciones:</b> '+esc(h.observaciones || '-')+
+  let html='<div class="ficha">'+
+    '<b>Limpieza / aptitud:</b> '+esc(h.estado||h.texto||'-')+'<br>'+
+    '<b>Fecha:</b> '+esc(h.fecha||'-')+'<br>'+
+    '<b>Necesita sosa:</b> '+esc(h.necesita_sosa||'-')+'<br>'+
+    '<b>Necesita desinfección:</b> '+esc(h.necesita_desinfeccion||'-')+'<br>'+
+    '<b>Apto tinto:</b> '+esc(h.apto_tinto||'-')+'<br>'+
+    '<b>Apto blanco/rosado:</b> '+esc(h.apto_blanco_rosado||'-')+'<br>'+
+    '<b>Tipo limpieza:</b> '+esc(h.tipo_limpieza||'-')+'<br>'+
+    '<b>Realizado por:</b> '+esc(h.realizado_por||'-')+'<br>'+
+    '<b>Incidencia:</b> '+esc(h.incidencia||'-')+'<br>'+
+    '<b>Observaciones:</b> '+esc(h.observaciones||'-')+
     '</div>';
 
-  let hist = LIMPIEZAS_DEPOSITOS.filter(function(x){
-    return String(x.dep || '').toUpperCase() === String(dep || '').toUpperCase();
+  let hist=LIMPIEZAS_DEPOSITOS.filter(function(x){
+    return String(x.dep||'').toUpperCase()===String(dep||'').toUpperCase();
   });
 
-  html += bloque('Histórico limpieza / aptitud', pintarLista(hist,'hig'));
-
+  html+=bloque('Histórico limpieza / aptitud',pintarLista(hist,'hig'));
   return html;
 }
 
 function showDep(dep,d){
-  let ok = Number(d.volumen || 0) > 0 ? 'ok' : 'warn';
-  let lote = d.lote || '';
+  let ok=Number(d.volumen||0)>0?'ok':'warn';
+  let lote=d.lote||'';
+  let html='<div class="title">'+esc(dep)+'</div>';
 
-  let html = '<div class="title">'+esc(dep)+'</div>';
-
-  html += '<div class="ficha">' +
-    '<b>Fecha:</b> '+esc(d.fecha || '-')+'<br>' +
-    '<b>Volumen:</b> <span class="'+ok+'">'+fmt(d.volumen)+' L</span><br>' +
-    '<b>Capacidad:</b> '+fmt(d.capacidad)+' L<br>' +
-    '<b>Tipo:</b> '+esc(d.tipo || '-')+'<br>' +
-    '<b>Estado:</b> '+esc(d.estado || '-')+'<br>' +
-    '<b>Lote actual:</b> '+esc(lote || '-')+
+  html+='<div class="ficha">'+
+    '<b>Fecha:</b> '+esc(d.fecha||'-')+'<br>'+
+    '<b>Volumen:</b> <span class="'+ok+'">'+fmt(d.volumen)+' L</span><br>'+
+    '<b>Capacidad:</b> '+fmt(d.capacidad)+' L<br>'+
+    '<b>Tipo:</b> '+esc(d.tipo||'-')+'<br>'+
+    '<b>Estado:</b> '+esc(d.estado||'-')+'<br>'+
+    '<b>Lote actual:</b> '+esc(lote||'-')+
     '</div>';
 
-  html += bloqueFermentacion(dep,lote);
-  html += bloqueHistorialDeposito(dep,d);
+  html+=bloqueFermentacion(dep,lote);
+  html+=bloqueHistorialDeposito(dep,d);
 
   if(lote){
-    html += '<details class="box"><summary>Historial del lote actual</summary>'+construirArbol(dep,lote,0,{})+'</details>';
+    html+='<details class="box"><summary>Historial del lote actual</summary>'+
+          construirArbol(dep,lote,0,{})+'</details>';
   }
 
-  document.getElementById('info').innerHTML = html;
+  document.getElementById('info').innerHTML=html;
 }
 
-fetch('datos.json?nocache=' + Date.now())
-.then(function(r){
-  return r.text();
-})
+/* =========================================================
+   CARGA DEL datos.json
+   ========================================================= */
+
+fetch('datos.json?nocache='+Date.now())
+.then(function(r){return r.text();})
 .then(function(txt){
   if(txt.trim().startsWith('<')){
     throw new Error('datos.json contiene HTML, no datos JSON.');
   }
 
-  let data = JSON.parse(txt);
+  let data=JSON.parse(txt);
 
-  DEPOSITOS = data.depositos || {};
-  MAPAS = data.mapas || [];
-  MOVIMIENTOS = data.movimientos || [];
-  ADICIONES = data.adiciones || [];
-  ANALITICAS = data.analiticas || [];
+  DEPOSITOS=data.depositos||{};
+  MAPAS=data.mapas||[];
+  MOVIMIENTOS=data.movimientos||[];
+  ADICIONES=data.adiciones||[];
+  ANALITICAS=data.analiticas||[];
 
-  AUDIT_REMANENTES =
-    data.audit_remanentes_destino ||
-    data.AUDIT_REMANENTES_DESTINO ||
-    data.remanentes_destino ||
-    data.auditRemanentesDestino ||
+  AUDIT_REMANENTES=
+    data.audit_remanentes_destino||
+    data.AUDIT_REMANENTES_DESTINO||
+    data.remanentes_destino||
+    data.auditRemanentesDestino||
     [];
 
-  HIGIENE_DEPOSITOS = data.higiene_depositos || {};
-  LIMPIEZAS_DEPOSITOS = data.limpiezas_depositos || [];
-  RESUMEN_ANALITICAS = data.resumen_analiticas || {columnas:[], filas:[]};
-  FERMENTACIONES = data.fermentaciones || {procesos:[], diario:[]};
-COLORES_TIPO_VINO = data.colores_tipo_vino || {};
+  HIGIENE_DEPOSITOS=data.higiene_depositos||{};
+  LIMPIEZAS_DEPOSITOS=data.limpiezas_depositos||[];
+  RESUMEN_ANALITICAS=data.resumen_analiticas||{columnas:[],filas:[]};
+  FERMENTACIONES=data.fermentaciones||{procesos:[],diario:[]};
+  COLORES_TIPO_VINO=data.colores_tipo_vino||{};
+  ANADAS_DEPOSITOS=data.anadas_depositos||{};
 
-actualizarVolumenesFermentacion();
-
-render();
+  actualizarVolumenesFermentacion();
+  render();
   renderResumenAnaliticas();
-  document.getElementById('info').innerHTML = 'Pulsa un depósito.';
+  document.getElementById('info').innerHTML='Pulsa un depósito.';
 })
 .catch(function(e){
-  document.getElementById('info').innerHTML =
-    '<div class="error">No se pudo cargar datos.json<br>' + esc(e.message || e) + '</div>';
+  document.getElementById('info').innerHTML=
+    '<div class="error">No se pudo cargar datos.json<br>'+esc(e.message||e)+'</div>';
 });
 </script>
-
 </body>
 </html>
 
