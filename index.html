@@ -114,6 +114,8 @@ h1{font-size:18px;margin:0}.sub{font-size:12px;margin-top:4px}
 let DEPOSITOS = {};
 let MAPAS = [];
 let MOVIMIENTOS = [];
+let TRASIEGOS_FISICOS = [];
+let RELACIONES_LOTES = [];
 let ADICIONES = [];
 let ANALITICAS = [];
 let AUDIT_REMANENTES = [];
@@ -1068,24 +1070,441 @@ function movimientoPerteneceADeposito(x,dep){
   return posibles.some(function(v){return v&&v===depBuscado;});
 }
 
+function loteNorm(x){
+  return String(x || '').trim().toUpperCase();
+}
+
+function trasiegoFisicoAEvento(t, tipoForzado){
+  let origen = normalizarDep(campo(t,['origen','Dep_Origen','dep_origen']));
+  let destino = normalizarDep(campo(t,['destino','Dep_Destino','dep_destino']));
+  let loteOrigen = campo(t,['lote_origen','Lote_Origen','lote_origen_momento','Lote_Origen_Momento']);
+  let loteResultante = campo(t,['lote_resultante','Lote_Resultante']);
+  let mezclaTxt = campo(t,['es_mezcla','Es_Mezcla']);
+  let mezcla = normalizarSiNo(mezclaTxt);
+
+  let tipo = tipoForzado || (mezcla ? 'MEZCLA' : 'TRASIEGO');
+
+  let litros = campo(t,['litros','Litros','volumen','Volumen']);
+  let fecha = campo(t,['fecha','Fecha']);
+
+  let detalle =
+    tipo +
+    ' | Origen=' + origen +
+    ' | Destino=' + destino +
+    ' | Litros=' + litros +
+    (loteOrigen ? ' | Lote_Origen=' + loteOrigen : '') +
+    (loteResultante ? ' | Lote_Resultante=' + loteResultante : '') +
+    ' | Es_Mezcla=' + (mezcla ? 'SI' : 'NO');
+
+  return {
+    fecha: fecha,
+    tipo: tipo,
+    origen: origen,
+    destino: destino,
+    litros: litros,
+    lote_origen: loteOrigen,
+    lote_resultante: loteResultante,
+    es_mezcla: mezcla ? 'SI' : 'NO',
+    orden_sistema: campo(t,['orden_sistema','Orden_Sistema']),
+    detalle: detalle,
+    es_trasiego_fisico: true
+  };
+}
+
+function relacionLoteAEntradaVirtual(rel,depDestino,loteActual){
+  let origen = normalizarDep(campo(rel,['dep_origen','Dep_Origen']));
+  let loteOrigen = campo(rel,['lote_origen','Lote_Origen']);
+  let litros = campo(rel,['litros','Litros']);
+  let fecha = campo(rel,['fecha','Fecha']);
+  let tipo = campo(rel,['tipo_rel','Tipo_Rel']) || 'RELACION';
+
+  return {
+    fecha: fecha,
+    tipo: tipo,
+    origen: origen,
+    destino: normalizarDep(depDestino),
+    litros: litros,
+    lote_origen: loteOrigen,
+    lote_resultante: loteActual,
+    es_mezcla: tipo.toUpperCase().includes('MEZCLA') ? 'SI' : 'NO',
+    detalle:
+      tipo +
+      ' | Origen=' + origen +
+      ' | Destino=' + normalizarDep(depDestino) +
+      ' | Litros=' + litros +
+      ' | Lote_Origen=' + loteOrigen +
+      ' | Lote_Resultante=' + loteActual,
+    es_relacion_virtual: true
+  };
+}
+
+function relacionesPadresDirectos(lote){
+  let buscado = loteNorm(lote);
+
+  return (RELACIONES_LOTES || []).filter(function(r){
+    return loteNorm(campo(r,['lote_resultante','Lote_Resultante'])) === buscado;
+  });
+}
+
+function mismaFechaVisor(a,b){
+  let va = valorFecha(a);
+  let vb = valorFecha(b);
+
+  if(va && vb) return va === vb;
+
+  return String(a || '').trim() === String(b || '').trim();
+}
+
+function numeroVisor(x){
+  let s = String(x === undefined || x === null ? '' : x).trim();
+
+  if(!s) return 0;
+
+  if(/^[-+]?\d{1,3}([.,]\d{3})+$/.test(s)){
+    return Number(s.replace(/[.,]/g,''));
+  }
+
+  if(s.indexOf('.') >= 0 && s.indexOf(',') >= 0){
+    s = s.replace(/\./g,'').replace(',','.');
+  }else if(s.indexOf(',') >= 0){
+    s = s.replace(',','.');
+  }
+
+  let n = Number(s);
+  return isNaN(n) ? 0 : n;
+}
+
+function buscarTrasiegoDeRelacion(rel,depDestino){
+  let depBuscado = normalizarDep(depDestino);
+  let lotePadre = loteNorm(campo(rel,['lote_origen','Lote_Origen']));
+  let fechaRel = campo(rel,['fecha','Fecha']);
+  let depOrigenRel = normalizarDep(campo(rel,['dep_origen','Dep_Origen']));
+  let litrosRel = Math.abs(numeroVisor(campo(rel,['litros','Litros'])));
+
+  let candidatos = (TRASIEGOS_FISICOS || [])
+    .filter(function(t){
+      if(normalizarDep(campo(t,['destino','Dep_Destino'])) !== depBuscado){
+        return false;
+      }
+
+      if(fechaRel && !mismaFechaVisor(campo(t,['fecha','Fecha']), fechaRel)){
+        return false;
+      }
+
+      let lo = loteNorm(campo(t,['lote_origen','Lote_Origen']));
+      let lr = loteNorm(campo(t,['lote_resultante','Lote_Resultante']));
+
+      return lo === lotePadre || lr === lotePadre;
+    })
+    .map(function(t){
+      let score = 0;
+
+      let lo = loteNorm(campo(t,['lote_origen','Lote_Origen']));
+      let lr = loteNorm(campo(t,['lote_resultante','Lote_Resultante']));
+      let litros = Math.abs(numeroVisor(campo(t,['litros','Litros'])));
+      let origen = normalizarDep(campo(t,['origen','Dep_Origen']));
+
+      if(lo === lotePadre) score += 4;
+      if(lr === lotePadre) score += 3;
+
+      if(litrosRel > 0 && Math.abs(litros - litrosRel) <= 1){
+        score += 5;
+      }
+
+      if(depOrigenRel && origen === depOrigenRel){
+        score += 3;
+      }
+
+      return {t:t, score:score};
+    })
+    .sort(function(a,b){
+      if(b.score !== a.score) return b.score - a.score;
+
+      let oa = numeroVisor(campo(a.t,['orden_sistema','Orden_Sistema']));
+      let ob = numeroVisor(campo(b.t,['orden_sistema','Orden_Sistema']));
+
+      return ob - oa;
+    });
+
+  return candidatos.length ? candidatos[0].t : null;
+}
+
+function entradasFisicasNodo(dep,lote){
+  let depBuscado = normalizarDep(dep);
+  let padres = relacionesPadresDirectos(lote);
+  let salida = [];
+  let vistos = {};
+
+  /*
+    Si el lote tiene genealogia registrada, cada padre se casa
+    con el trasiego fisico real que entro EN ESTE deposito.
+  */
+  if(padres.length){
+    padres.forEach(function(rel){
+      let t = buscarTrasiegoDeRelacion(rel,depBuscado);
+      let ev = t
+        ? trasiegoFisicoAEvento(t)
+        : relacionLoteAEntradaVirtual(rel,depBuscado,lote);
+
+      let clave = [
+        ev.origen,
+        ev.destino,
+        ev.fecha,
+        ev.lote_origen,
+        ev.lote_resultante,
+        numeroVisor(ev.litros)
+      ].join('|');
+
+      if(!vistos[clave]){
+        vistos[clave] = true;
+        salida.push(ev);
+      }
+    });
+
+    return salida;
+  }
+
+  /*
+    Si no hay LOTES_REL_DET para el lote, seguimos la continuidad
+    fisica normal del mismo lote.
+  */
+  (TRASIEGOS_FISICOS || []).forEach(function(t){
+    if(normalizarDep(campo(t,['destino','Dep_Destino'])) !== depBuscado){
+      return;
+    }
+
+    let lo = loteNorm(campo(t,['lote_origen','Lote_Origen']));
+    let lr = loteNorm(campo(t,['lote_resultante','Lote_Resultante']));
+    let actual = loteNorm(lote);
+
+    if(lo !== actual && lr !== actual){
+      return;
+    }
+
+    let ev = trasiegoFisicoAEvento(t);
+
+    let clave = [
+      ev.origen,
+      ev.destino,
+      ev.fecha,
+      ev.lote_origen,
+      ev.lote_resultante,
+      numeroVisor(ev.litros)
+    ].join('|');
+
+    if(!vistos[clave]){
+      vistos[clave] = true;
+      salida.push(ev);
+    }
+  });
+
+  return salida;
+}
+
+function salidasFisicasNodo(dep,lote){
+  let depBuscado = normalizarDep(dep);
+  let loteBuscado = loteNorm(lote);
+  let salida = [];
+  let resultadosFisicos = {};
+
+  /*
+    Salidas fisicas reales desde el deposito.
+  */
+  (TRASIEGOS_FISICOS || []).forEach(function(t){
+    if(normalizarDep(campo(t,['origen','Dep_Origen'])) !== depBuscado){
+      return;
+    }
+
+    if(loteNorm(campo(t,['lote_origen','Lote_Origen'])) !== loteBuscado){
+      return;
+    }
+
+    let ev = trasiegoFisicoAEvento(t);
+    salida.push(ev);
+
+    let lr = loteNorm(ev.lote_resultante);
+    if(lr) resultadosFisicos[lr] = true;
+  });
+
+  /*
+    Transformaciones del lote DENTRO del mismo deposito.
+    Ejemplo:
+    I18 / L-2026-0413 -> L-2026-0446 por mezcla que llega desde A8.
+  */
+  (RELACIONES_LOTES || []).forEach(function(rel){
+    if(loteNorm(campo(rel,['lote_origen','Lote_Origen'])) !== loteBuscado){
+      return;
+    }
+
+    if(normalizarDep(campo(rel,['dep_origen','Dep_Origen'])) !== depBuscado){
+      return;
+    }
+
+    let lr = campo(rel,['lote_resultante','Lote_Resultante']);
+
+    if(!lr || loteNorm(lr) === loteBuscado){
+      return;
+    }
+
+    if(resultadosFisicos[loteNorm(lr)]){
+      return;
+    }
+
+    let tipo = campo(rel,['tipo_rel','Tipo_Rel']) || 'TRANSFORMACION';
+    let litros = campo(rel,['litros','Litros']);
+    let fecha = campo(rel,['fecha','Fecha']);
+
+    salida.push({
+      fecha: fecha,
+      tipo: tipo,
+      origen: depBuscado,
+      destino: depBuscado,
+      litros: litros,
+      lote_origen: lote,
+      lote_resultante: lr,
+      es_mezcla: normalizarTexto(tipo).includes('MEZCLA') ? 'SI' : 'NO',
+      detalle:
+        tipo +
+        ' EN EL MISMO DEPOSITO' +
+        ' | Deposito=' + depBuscado +
+        ' | Litros=' + litros +
+        ' | Lote_Origen=' + lote +
+        ' | Lote_Resultante=' + lr,
+      es_transformacion_mismo_deposito: true
+    });
+  });
+
+  return salida;
+}
+
+function pareceTrasiegoEntreDepositos(x){
+  let o = origenMovimiento(x);
+  let d = destinoMovimiento(x);
+
+  return !!(o && d && o !== d);
+}
+
+function unirEventosSinDuplicar(a,b){
+  let salida = [];
+  let vistos = {};
+
+  (a || []).concat(b || []).forEach(function(x){
+    let clave = [
+      String(x.fecha || ''),
+      origenMovimiento(x),
+      destinoMovimiento(x),
+      loteOrigenMovimiento(x,''),
+      loteResultanteMovimiento(x),
+      Math.abs(litrosMovimiento(x)),
+      tipoMovimientoVisor(x)
+    ].join('|');
+
+    if(!vistos[clave]){
+      vistos[clave] = true;
+      salida.push(x);
+    }
+  });
+
+  return salida;
+}
+
 function eventosNodo(dep,lote){
-  let depBuscado=normalizarDep(dep);
-  let entradas=MOVIMIENTOS.filter(function(x){
+  let depBuscado = normalizarDep(dep);
+
+  /*
+    Si el JSON todavía no lleva la nueva fuente fisica,
+    mantenemos el comportamiento antiguo como respaldo.
+  */
+  if(!(TRASIEGOS_FISICOS || []).length){
+    let entradasAntiguas = MOVIMIENTOS.filter(function(x){
+      if(!perteneceLote(x,lote)) return false;
+
+      let destino = destinoMovimiento(x);
+
+      if(destino && destino === depBuscado) return true;
+
+      return movimientoPerteneceADeposito(x,depBuscado) && esEntradaMovimiento(x);
+    });
+
+    let salidasAntiguas = MOVIMIENTOS.filter(function(x){
+      if(!perteneceLote(x,lote)) return false;
+
+      let origen = origenMovimiento(x);
+
+      if(origen && origen === depBuscado) return true;
+
+      return movimientoPerteneceADeposito(x,depBuscado) && esSalidaMovimiento(x);
+    });
+
+    let adisAntiguas = ADICIONES.filter(function(x){
+      return normalizarDep(x.dep) === depBuscado && perteneceLote(x,lote);
+    });
+
+    let anasAntiguas = ANALITICAS.filter(function(x){
+      return normalizarDep(x.dep) === depBuscado && perteneceLote(x,lote);
+    });
+
+    return {
+      entradas: entradasAntiguas,
+      salidas: salidasAntiguas,
+      adis: adisAntiguas,
+      anas: anasAntiguas
+    };
+  }
+
+  let entradasFisicas = entradasFisicasNodo(depBuscado,lote);
+  let salidasFisicas = salidasFisicasNodo(depBuscado,lote);
+
+  /*
+    MOVIMIENTOS sigue siendo fuente para:
+    - ENTRADA_ORIGEN
+    - APORTE_FERMENTACION
+    - MERMAS
+    - SALIDA_CLIENTE
+    - EMBOTELLADO
+    etc.
+
+    Pero ya NO decide la genealogia fisica entre depositos.
+  */
+  let entradasMov = MOVIMIENTOS.filter(function(x){
     if(!perteneceLote(x,lote)) return false;
-    let destino=destinoMovimiento(x);
-    if(destino&&destino===depBuscado) return true;
-    return movimientoPerteneceADeposito(x,depBuscado)&&esEntradaMovimiento(x);
+    if(pareceTrasiegoEntreDepositos(x)) return false;
+
+    return movimientoPerteneceADeposito(x,depBuscado) && esEntradaMovimiento(x);
   });
-  let salidas=MOVIMIENTOS.filter(function(x){
+
+  let salidasMov = MOVIMIENTOS.filter(function(x){
     if(!perteneceLote(x,lote)) return false;
-    let origen=origenMovimiento(x);
-    if(origen&&origen===depBuscado) return true;
-    return movimientoPerteneceADeposito(x,depBuscado)&&esSalidaMovimiento(x);
+    if(pareceTrasiegoEntreDepositos(x)) return false;
+
+    return movimientoPerteneceADeposito(x,depBuscado) && esSalidaMovimiento(x);
   });
-  let adis=ADICIONES.filter(function(x){return normalizarDep(x.dep)===depBuscado&&perteneceLote(x,lote);});
-  let anas=ANALITICAS.filter(function(x){return normalizarDep(x.dep)===depBuscado&&perteneceLote(x,lote);});
-  anas=anas.concat(analiticasFermentacionParaDeposito(dep,lote));
-  return {entradas:entradas,salidas:salidas,adis:adis,anas:anas};
+
+  let entradas = unirEventosSinDuplicar(entradasFisicas,entradasMov);
+  let salidas = unirEventosSinDuplicar(salidasFisicas,salidasMov);
+
+  let adis = ADICIONES.filter(function(x){
+    return normalizarDep(x.dep) === depBuscado && perteneceLote(x,lote);
+  });
+
+  let anas = ANALITICAS.filter(function(x){
+    return normalizarDep(x.dep) === depBuscado && perteneceLote(x,lote);
+  });
+
+  /*
+    Conserva los controles de FERM_DIARIO que el visor actual
+    ya incorpora visualmente dentro de Analiticas.
+  */
+  if(typeof analiticasFermentacionParaDeposito === 'function'){
+    anas = anas.concat(analiticasFermentacionParaDeposito(dep,lote));
+  }
+
+  return {
+    entradas: entradas,
+    salidas: salidas,
+    adis: adis,
+    anas: anas
+  };
 }
 
 function textoMovimiento(x){
@@ -1438,6 +1857,8 @@ fetch('datos.json?nocache='+Date.now())
   DEPOSITOS=data.depositos||{};
   MAPAS=data.mapas||[];
   MOVIMIENTOS=data.movimientos||[];
+  TRASIEGOS_FISICOS=data.trasiegos_fisicos||[];
+  RELACIONES_LOTES=data.relaciones_lotes||[];
   ADICIONES=data.adiciones||[];
   ANALITICAS=data.analiticas||[];
 
