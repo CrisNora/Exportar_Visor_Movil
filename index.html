@@ -1,4 +1,5 @@
 <!doctype html>
+<!-- VISOR RAMA FISICA V2: corrige entradas previas a mezclas posteriores -->
 <html lang="es">
 <head>
 <meta charset="utf-8">
@@ -1178,16 +1179,21 @@ function buscarTrasiegoDeRelacion(rel,depDestino){
   let depBuscado = normalizarDep(depDestino);
   let lotePadre = loteNorm(campo(rel,['lote_origen','Lote_Origen']));
   let fechaRel = campo(rel,['fecha','Fecha']);
+  let fechaRelNum = valorFecha(fechaRel);
   let depOrigenRel = normalizarDep(campo(rel,['dep_origen','Dep_Origen']));
   let litrosRel = Math.abs(numeroVisor(campo(rel,['litros','Litros'])));
 
+  /*
+    La fecha de LOTES_REL_DET puede ser la fecha de una mezcla posterior,
+    no la fecha en que ese vino entró físicamente en el depósito.
+
+    Por eso NO exigimos misma fecha.
+    Buscamos el trasiego físico real del lote padre HACIA el depósito
+    consultado y elegimos el candidato más coherente.
+  */
   let candidatos = (TRASIEGOS_FISICOS || [])
     .filter(function(t){
       if(normalizarDep(campo(t,['destino','Dep_Destino'])) !== depBuscado){
-        return false;
-      }
-
-      if(fechaRel && !mismaFechaVisor(campo(t,['fecha','Fecha']), fechaRel)){
         return false;
       }
 
@@ -1203,27 +1209,48 @@ function buscarTrasiegoDeRelacion(rel,depDestino){
       let lr = loteNorm(campo(t,['lote_resultante','Lote_Resultante']));
       let litros = Math.abs(numeroVisor(campo(t,['litros','Litros'])));
       let origen = normalizarDep(campo(t,['origen','Dep_Origen']));
+      let fechaT = campo(t,['fecha','Fecha']);
+      let fechaTNum = valorFecha(fechaT);
 
-      if(lo === lotePadre) score += 4;
-      if(lr === lotePadre) score += 3;
+      if(lo === lotePadre) score += 40;
+      if(lr === lotePadre) score += 25;
 
       if(litrosRel > 0 && Math.abs(litros - litrosRel) <= 1){
+        score += 30;
+      }
+
+      if(fechaRel && mismaFechaVisor(fechaT, fechaRel)){
+        score += 20;
+      }
+
+      if(fechaRelNum && fechaTNum){
+        if(fechaTNum <= fechaRelNum){
+          score += 10;
+        }else{
+          score -= 20;
+        }
+      }
+
+      /*
+        Dep_Origen de LOTES_REL_DET puede ser el depósito donde ya
+        residía el vino en el momento de la mezcla. Solo apoya la
+        puntuación; nunca bloquea el trasiego físico real.
+      */
+      if(depOrigenRel && origen === depOrigenRel){
         score += 5;
       }
 
-      if(depOrigenRel && origen === depOrigenRel){
-        score += 3;
-      }
-
-      return {t:t, score:score};
+      return {
+        t:t,
+        score:score,
+        fechaNum:fechaTNum,
+        orden:numeroVisor(campo(t,['orden_sistema','Orden_Sistema']))
+      };
     })
     .sort(function(a,b){
       if(b.score !== a.score) return b.score - a.score;
-
-      let oa = numeroVisor(campo(a.t,['orden_sistema','Orden_Sistema']));
-      let ob = numeroVisor(campo(b.t,['orden_sistema','Orden_Sistema']));
-
-      return ob - oa;
+      if(b.fechaNum !== a.fechaNum) return b.fechaNum - a.fechaNum;
+      return b.orden - a.orden;
     });
 
   return candidatos.length ? candidatos[0].t : null;
