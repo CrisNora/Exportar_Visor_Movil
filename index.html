@@ -1257,74 +1257,42 @@ function buscarTrasiegoDeRelacion(rel,depDestino){
 }
 
 function entradasFisicasNodo(dep,lote){
-  let depBuscado = normalizarDep(dep);
-  let padres = relacionesPadresDirectos(lote);
-  let salida = [];
-  let vistos = {};
-
-  /*
-    Si el lote tiene genealogia registrada, cada padre se casa
-    con el trasiego fisico real que entro EN ESTE deposito.
-  */
-  if(padres.length){
-    padres.forEach(function(rel){
-      let t = buscarTrasiegoDeRelacion(rel,depBuscado);
-      let ev = t
-        ? trasiegoFisicoAEvento(t)
-        : relacionLoteAEntradaVirtual(rel,depBuscado,lote);
-
-      let clave = [
-        ev.origen,
-        ev.destino,
-        ev.fecha,
-        ev.lote_origen,
-        ev.lote_resultante,
-        numeroVisor(ev.litros)
-      ].join('|');
-
-      if(!vistos[clave]){
-        vistos[clave] = true;
-        salida.push(ev);
-      }
-    });
-
-    return salida;
+  const destino = normalizarDep(dep);
+  const actual = loteNorm(lote);
+  const fisicos = (TRASIEGOS_FISICOS || []).filter(function(t){
+    return normalizarDep(campo(t,['destino','Dep_Destino'])) === destino &&
+      loteNorm(campo(t,['lote_resultante','Lote_Resultante'])) === actual;
+  });
+  const salida = [];
+  const vistos = new Set();
+  function agregar(ev){
+    const clave = [ev.fecha,ev.origen,ev.destino,ev.lote_origen,
+                   ev.lote_resultante,numeroVisor(ev.litros)].join('|');
+    if(!vistos.has(clave)){vistos.add(clave);salida.push(ev);}
   }
 
-  /*
-    Si no hay LOTES_REL_DET para el lote, seguimos la continuidad
-    fisica normal del mismo lote.
-  */
-  (TRASIEGOS_FISICOS || []).forEach(function(t){
-    if(normalizarDep(campo(t,['destino','Dep_Destino'])) !== depBuscado){
-      return;
-    }
+  // Prioridad: trasiegos reales al depósito y al lote consultados.
+  // La genealogía histórica de una mezcla no reemplaza estos trasiegos.
+  fisicos.forEach(function(t){agregar(trasiegoFisicoAEvento(t));});
 
-    let lo = loteNorm(campo(t,['lote_origen','Lote_Origen']));
-    let lr = loteNorm(campo(t,['lote_resultante','Lote_Resultante']));
-    let actual = loteNorm(lote);
-
-    if(lo !== actual && lr !== actual){
-      return;
-    }
-
-    let ev = trasiegoFisicoAEvento(t);
-
-    let clave = [
-      ev.origen,
-      ev.destino,
-      ev.fecha,
-      ev.lote_origen,
-      ev.lote_resultante,
-      numeroVisor(ev.litros)
-    ].join('|');
-
-    if(!vistos[clave]){
-      vistos[clave] = true;
-      salida.push(ev);
-    }
+  // Los padres originales se añaden SOLO en el depósito de creación
+  // de la mezcla. En otros depósitos se llega a ellos retrocediendo
+  // por los trasiegos físicos reales, sin saltar etapas.
+  const creacion = fisicos.some(function(t){
+    return normalizarSiNo(campo(t,['es_mezcla','Es_Mezcla'])) &&
+      loteNorm(campo(t,['lote_origen','Lote_Origen'])) !== actual;
   });
-
+  if(creacion){
+    relacionesPadresDirectos(lote).forEach(function(rel){
+      const padre = loteNorm(campo(rel,['lote_origen','Lote_Origen']));
+      const origen = normalizarDep(campo(rel,['dep_origen','Dep_Origen']));
+      const yaFisico = fisicos.some(function(t){
+        return loteNorm(campo(t,['lote_origen','Lote_Origen'])) === padre &&
+          normalizarDep(campo(t,['origen','Dep_Origen'])) === origen;
+      });
+      if(!yaFisico) agregar(relacionLoteAEntradaVirtual(rel,destino,lote));
+    });
+  }
   return salida;
 }
 
@@ -1552,8 +1520,8 @@ function ultimaAnaliticaDeDeposito(dep,lote){
   });
   let encontrada=ordenarFechaDesc(listaMismoLote)[0]||null;
   if(encontrada) return encontrada;
-  let listaSoloDeposito=ANALITICAS.filter(function(a){return String(a.dep||'').trim()===depBuscado;});
-  return ordenarFechaDesc(listaSoloDeposito)[0]||null;
+  // Nunca heredar de otro lote por coincidir únicamente el depósito.
+  return null;
 }
 
 function normalizarSiNo(x){
